@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DfM Casting Checker — Aluminum (NADCA) · 3D</title>
+<style>
+  :root{
+    --bg:#0e1217; --panel:#161c24; --panel2:#1f2832; --line:#2a3543;
+    --txt:#e6edf3; --mut:#90a0b2; --accent:#4a9eff;
+    --ok:#3fb950; --warn:#d29922; --crit:#f85149; --info:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--txt);
+    font:13.5px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    display:flex;flex-direction:column;overflow:hidden}
+
+  /* ---------- top dashboard ---------- */
+  #top{flex:none;border-bottom:1px solid var(--line);background:var(--panel);
+    display:flex;align-items:center;gap:18px;padding:10px 18px;flex-wrap:wrap}
+  #top .brand{font-weight:700;font-size:15px;letter-spacing:.2px}
+  #top .brand small{font-weight:400;color:var(--mut);font-size:11px;margin-left:6px}
+  .stat{display:flex;flex-direction:column;line-height:1.25}
+  .stat .k{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px}
+  .stat .v{font-size:15px;font-weight:650}
+  .stat .v.crit{color:var(--crit)} .stat .v.warn{color:var(--warn)} .stat .v.ok{color:var(--ok)}
+  #top .spacer{flex:1}
+  select,button{font:inherit;color:var(--txt);background:var(--panel2);
+    border:1px solid var(--line);border-radius:7px;padding:6px 11px;cursor:pointer}
+  button:hover,select:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#06121f;font-weight:650}
+
+  /* ---------- main split ---------- */
+  #main{flex:1;display:flex;min-height:0}
+  #left{flex:1.45;position:relative;min-width:0;background:
+    radial-gradient(120% 120% at 50% 20%,#19222d 0%,#0c1015 100%)}
+  #canvas{width:100%;height:100%;display:block}
+  #right{flex:1;max-width:430px;min-width:330px;border-left:1px solid var(--line);
+    background:var(--panel);display:flex;flex-direction:column;min-height:0}
+
+  /* viewer overlays */
+  .vhint{position:absolute;left:14px;bottom:12px;color:var(--mut);font-size:11px;
+    background:rgba(10,14,18,.6);padding:5px 9px;border-radius:6px;pointer-events:none}
+  .legend{position:absolute;right:14px;top:12px;display:flex;flex-direction:column;gap:5px;
+    background:rgba(10,14,18,.55);padding:8px 10px;border-radius:7px;font-size:11px}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+  #navbar{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;
+    display:flex;align-items:center;gap:10px;background:rgba(12,16,22,.82);
+    border:1px solid var(--line);border-radius:10px;padding:7px 10px}
+  #navbar button{padding:5px 12px;font-weight:650}
+  #navbar .pos{min-width:64px;text-align:center;font-variant-numeric:tabular-nums}
+
+  /* ---------- right panel ---------- */
+  .rhead{flex:none;padding:14px 18px;border-bottom:1px solid var(--line)}
+  .rhead .badge{display:inline-flex;align-items:center;gap:8px;font-size:11px;
+    text-transform:uppercase;letter-spacing:.5px;font-weight:700;padding:3px 10px;border-radius:20px}
+  .badge.crit{background:rgba(248,81,73,.16);color:var(--crit)}
+  .badge.warn{background:rgba(210,153,34,.16);color:var(--warn)}
+  .badge.info{background:rgba(88,166,255,.16);color:var(--info)}
+  .badge.ok{background:rgba(63,185,80,.16);color:var(--ok)}
+  .rhead h2{margin:10px 0 2px;font-size:18px}
+  .rhead .sub{color:var(--mut);font-size:12px}
+  .rbody{flex:1;overflow:auto;padding:6px 18px 18px}
+  .field{margin-top:16px}
+  .field .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);
+    margin-bottom:5px;display:flex;align-items:center;gap:7px}
+  .field .lbl i{width:9px;height:9px;border-radius:50%}
+  .field .box{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:11px 13px}
+  .field.cur .box{border-left:3px solid var(--crit)}
+  .field.rec .box{border-left:3px solid var(--ok)}
+  .clause{margin-top:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .clause a{display:inline-flex;align-items:center;gap:7px;text-decoration:none;
+    background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;color:var(--accent)}
+  .clause a:hover{border-color:var(--accent)}
+  .clause .cn{color:var(--mut);font-size:12px}
+
+  /* item list */
+  .rlist{flex:none;max-height:34%;overflow:auto;border-top:1px solid var(--line);padding:8px 10px}
+  .rlist .it{display:flex;gap:9px;align-items:center;padding:7px 9px;border-radius:8px;cursor:pointer}
+  .rlist .it:hover{background:var(--panel2)}
+  .rlist .it.active{background:var(--panel2);outline:1px solid var(--accent)}
+  .rlist .it .num{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;
+    justify-content:center;font-size:11px;font-weight:700;flex:none}
+  .num.crit{background:rgba(248,81,73,.2);color:var(--crit)}
+  .num.warn{background:rgba(210,153,34,.2);color:var(--warn)}
+  .num.info{background:rgba(88,166,255,.2);color:var(--info)}
+  .rlist .it .tt{flex:1;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rlist .it .mm{color:var(--mut);font-size:11px;font-variant-numeric:tabular-nums}
+
+  /* ---------- drop screen ---------- */
+  #drop{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;text-align:center;z-index:5;background:var(--bg)}
+  #drop.hide{display:none}
+  #drop .card{border:2px dashed var(--line);border-radius:16px;padding:48px 60px;cursor:pointer;
+    transition:.15s}
+  #drop .card.hover{border-color:var(--accent);background:#16202c}
+  #drop .big{font-size:42px;margin-bottom:10px}
+  #drop h1{font-size:20px;margin:0 0 6px}
+  #drop p{color:var(--mut);margin:4px 0}
+  input[type=file]{display:none}
+  #loading{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    flex-direction:column;gap:14px;z-index:6;background:rgba(10,14,18,.9)}
+  #loading.show{display:flex}
+  .spin{width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--accent);
+    border-radius:50%;animation:sp 0.9s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .muted{color:var(--mut)}
+</style>
+</head>
+<body>
+
+<!-- ============ TOP DASHBOARD ============ -->
+<div id="top">
+  <div class="brand">DfM Casting Checker <small>Aluminum · NADCA 2015 · 3D</small></div>
+  <div class="stat"><span class="k">File</span><span class="v" id="s-file">—</span></div>
+  <div class="stat"><span class="k">Unit</span><span class="v" id="s-unit">—</span></div>
+  <div class="stat"><span class="k">Envelope (mm)</span><span class="v" id="s-env">—</span></div>
+  <div class="stat"><span class="k">Faces</span><span class="v" id="s-faces">—</span></div>
+  <div class="stat"><span class="k">Critical</span><span class="v crit" id="s-crit">—</span></div>
+  <div class="stat"><span class="k">Warnings</span><span class="v warn" id="s-warn">—</span></div>
+  <div class="stat"><span class="k">Items</span><span class="v" id="s-items">—</span></div>
+  <div class="spacer"></div>
+  <label class="muted" style="font-size:12px">Pull axis</label>
+  <select id="axis" title="Ejection / pull direction">
+    <option value="auto">Auto (longest)</option>
+    <option value="0">X</option><option value="1">Y</option><option value="2">Z</option>
+  </select>
+  <button id="reload">Load file</button>
+</div>
+
+<!-- ============ MAIN SPLIT ============ -->
+<div id="main">
+  <div id="left">
+    <canvas id="canvas"></canvas>
+    <div class="legend">
+      <div><i style="background:#f85149"></i>Selected concern</div>
+      <div><i style="background:#d29922"></i>Other concern</div>
+      <div><i style="background:#7d8da0"></i>OK surface</div>
+    </div>
+    <div class="vhint">drag = rotate · scroll = zoom · right-drag = pan · click a red/amber face to select</div>
+    <div id="navbar" style="display:none">
+      <button id="prev">‹ Prev</button>
+      <span class="pos" id="pos">0 / 0</span>
+      <button id="next">Next ›</button>
+    </div>
+
+    <!-- drop & loading overlays -->
+    <div id="drop">
+      <div class="card" id="dropcard">
+        <div class="big">⬡</div>
+        <h1>Drop a STEP file</h1>
+        <p>or click to choose a <b>.step / .stp</b> file</p>
+        <p style="font-size:12px">Analyzed entirely on this computer — nothing is uploaded.</p>
+      </div>
+      <input id="file" type="file" accept=".step,.stp,.STEP,.STP">
+    </div>
+    <div id="loading"><div class="spin"></div><div class="muted" id="loadtxt">Loading geometry kernel…</div></div>
+  </div>
+
+  <!-- ============ RIGHT DETAIL PANEL ============ -->
+  <div id="right">
+    <div class="rhead">
+      <span class="badge info" id="r-badge">—</span>
+      <h2 id="r-title">Load a model to begin</h2>
+      <div class="sub" id="r-sub">The 3D view will highlight each area of concern.</div>
+    </div>
+    <div class="rbody" id="r-body">
+      <p class="muted">Findings will appear here. Use Prev / Next to walk through items 1…N; the selected surface is shown in red on the left.</p>
+    </div>
+    <div class="rlist" id="r-list"></div>
+  </div>
+</div>
+
+<!-- offline assets (loaded locally; no network) -->
+<script src="dfm-assets/three.min.js"></script>
+<script src="dfm-assets/OrbitControls.js"></script>
+<script src="dfm-assets/occt-import-js.js"></script>
+<script src="dfm-assets/occt-wasm-b64.js"></script>
+<script src="dfm-assets/dfm-engine.js"></script>
+
+<script>
+(function(){
+  "use strict";
+  var $=function(id){return document.getElementById(id);};
+
+  // ---- state ----
+  var occt=null, meshRaw=null, stepText=null, fileName='', analysis=null,
+      active=-1, geom=null, mesh3=null, scene,camera,renderer,controls,
+      raycaster, triFace=null;
+
+  var COL={base:[0.49,0.55,0.63], concern:[0.82,0.6,0.13], active:[0.97,0.32,0.29]};
+
+  // ---- WASM kernel init (once) ----
+  function b64ToBytes(b64){
+    var bin=atob(b64), n=bin.length, a=new Uint8Array(n);
+    for(var i=0;i<n;i++)a[i]=bin.charCodeAt(i);
+    return a;
+  }
+  function initOCCT(){
+    if(occt) return Promise.resolve(occt);
+    var bytes=b64ToBytes(window.__OCCT_WASM_B64);
+    return window.occtimportjs({
+      instantiateWasm:function(imports,success){
+        WebAssembly.instantiate(bytes,imports).then(function(o){success(o.instance,o.module);});
+        return {};
+      }
+    }).then(function(m){occt=m;return m;});
+  }
+
+  // ---- three.js scene ----
+  function initScene(){
+    var cv=$('canvas');
+    renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+    renderer.setPixelRatio(window.devicePixelRatio||1);
+    scene=new THREE.Scene();
+    camera=new THREE.PerspectiveCamera(45,1,0.01,100000);
+    controls=new THREE.OrbitControls(camera,renderer.domElement);
+    controls.enableDamping=true; controls.dampingFactor=0.12;
+    scene.add(new THREE.AmbientLight(0xffffff,0.55));
+    var d1=new THREE.DirectionalLight(0xffffff,0.8); d1.position.set(1,1.5,1); scene.add(d1);
+    var d2=new THREE.DirectionalLight(0xffffff,0.4); d2.position.set(-1,-0.5,-1); scene.add(d2);
+    raycaster=new THREE.Raycaster();
+    cv.addEventListener('click',onPick);
+    window.addEventListener('resize',resize);
+    (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
+    resize();
+  }
+  function resize(){
+    var l=$('left'); renderer.setSize(l.clientWidth,l.clientHeight,false);
+    camera.aspect=l.clientWidth/l.clientHeight; camera.updateProjectionMatrix();
+  }
+
+  // build a flat (non-indexed) mesh so each triangle colours independently
+  function buildMesh(m){
+    if(mesh3){scene.remove(mesh3);mesh3.geometry.dispose();}
+    var pos=m.position, idx=m.index, FR=m.faces;
+    var nTri=idx.length/3;
+    var verts=new Float32Array(nTri*9), cols=new Float32Array(nTri*9);
+    triFace=new Int32Array(nTri);
+    for(var fi=0;fi<FR.length;fi++)for(var t=FR[fi].first;t<=FR[fi].last;t++)triFace[t]=fi;
+    for(var t2=0;t2<nTri;t2++){
+      for(var k=0;k<3;k++){
+        var vi=idx[3*t2+k]*3, o=t2*9+k*3;
+        verts[o]=pos[vi]; verts[o+1]=pos[vi+1]; verts[o+2]=pos[vi+2];
+      }
+    }
+    geom=new THREE.BufferGeometry();
+    geom.setAttribute('position',new THREE.BufferAttribute(verts,3));
+    geom.setAttribute('color',new THREE.BufferAttribute(cols,3));
+    geom.computeVertexNormals();
+    geom.computeBoundingBox(); geom.computeBoundingSphere();
+    var matr=new THREE.MeshStandardMaterial({vertexColors:true,metalness:0.1,roughness:0.7,
+      flatShading:true,side:THREE.DoubleSide});
+    mesh3=new THREE.Mesh(geom,matr); scene.add(mesh3);
+    fitCamera();
+  }
+  function fitCamera(){
+    var s=geom.boundingSphere, c=s.center, r=s.radius||1;
+    controls.target.copy(c);
+    camera.position.set(c.x+r*1.6,c.y+r*1.1,c.z+r*2.0);
+    camera.near=r/100; camera.far=r*100; camera.updateProjectionMatrix();
+  }
+  // set vertex colors: base / concern / active
+  function paint(){
+    if(!geom) return;
+    var col=geom.attributes.color.array, nTri=triFace.length;
+    var concernSet={}, activeSet={};
+    if(analysis){
+      analysis.items.forEach(function(it){it.faces.forEach(function(f){concernSet[f]=1;});});
+      if(active>=0) analysis.items[active].faces.forEach(function(f){activeSet[f]=1;});
+    }
+    for(var t=0;t<nTri;t++){
+      var f=triFace[t], c= activeSet[f]?COL.active : concernSet[f]?COL.concern : COL.base;
+      for(var k=0;k<3;k++){var o=t*9+k*3; col[o]=c[0];col[o+1]=c[1];col[o+2]=c[2];}
+    }
+    geom.attributes.color.needsUpdate=true;
+  }
+
+  function onPick(ev){
+    if(!mesh3||!analysis) return;
+    var rect=renderer.domElement.getBoundingClientRect();
+    var mx=((ev.clientX-rect.left)/rect.width)*2-1, my=-((ev.clientY-rect.top)/rect.height)*2+1;
+    raycaster.setFromCamera({x:mx,y:my},camera);
+    var hit=raycaster.intersectObject(mesh3);
+    if(!hit.length) return;
+    var tri=hit[0].faceIndex;
+    var face=triFace[tri];
+    for(var i=0;i<analysis.items.length;i++){
+      if(analysis.items[i].faces.indexOf(face)>=0){ select(i); return; }
+    }
+  }
+
+  // ---- run analysis on current mesh ----
+  function runAnalysis(){
+    var mesh={position:meshRaw.attributes.position.array,
+              index:meshRaw.index.array,
+              faces:meshRaw.brep_faces.map(function(f){return {first:f.first,last:f.last};})};
+    analysis=window.DfMEngine.run(mesh, stepText, {axis:$('axis').value});
+    var d=analysis.bbox.dim;
+    $('s-file').textContent=fileName.length>22?fileName.slice(0,20)+'…':fileName;
+    $('s-unit').textContent=analysis.unit.name;
+    $('s-env').textContent=d.map(function(v){return v.toFixed(1);}).join('×');
+    $('s-faces').textContent=analysis.nFaces;
+    var crit=analysis.items.filter(function(i){return i.sev==='crit';}).length;
+    var warn=analysis.items.filter(function(i){return i.sev==='warn';}).length;
+    $('s-crit').textContent=crit; $('s-warn').textContent=warn;
+    $('s-items').textContent=analysis.items.length;
+    buildList();
+    $('navbar').style.display=analysis.items.length?'flex':'none';
+    if(analysis.items.length){ select(0); } else { showEmpty(); }
+    paint();
+  }
+
+  function buildList(){
+    var L=$('r-list'); L.innerHTML='';
+    analysis.items.forEach(function(it,i){
+      var div=document.createElement('div'); div.className='it'; div.dataset.i=i;
+      div.innerHTML='<span class="num '+it.sev+'">'+it.n+'</span>'+
+        '<span class="tt">'+it.type+'</span>'+
+        '<span class="mm">'+(it.metric?fmtMetric(it):'')+'</span>';
+      div.addEventListener('click',function(){select(+this.dataset.i);});
+      L.appendChild(div);
+    });
+  }
+  function fmtMetric(it){
+    if(it.type.indexOf('draft')>=0||it.type.indexOf('Insufficient')>=0) return it.metric.toFixed(2)+'°';
+    return it.metric.toFixed(1)+'mm';
+  }
+
+  function select(i){
+    active=i; var it=analysis.items[i];
+    $('pos').textContent=(i+1)+' / '+analysis.items.length;
+    var sevName={crit:'Critical',warn:'Warning',info:'Verify',ok:'OK'}[it.sev];
+    $('r-badge').className='badge '+it.sev; $('r-badge').textContent='Item '+it.n+' · '+sevName;
+    $('r-title').textContent=it.type;
+    $('r-sub').textContent='Highlighted in red on the model'+
+      (it.faces.length>1?' ('+it.faces.length+' faces)':'')+'.';
+    var pageUrl=analysis.PDF+'#page='+it.ref.page;
+    $('r-body').innerHTML=
+      '<div class="field cur"><div class="lbl"><i style="background:var(--crit)"></i>Current in your model</div>'+
+        '<div class="box">'+esc(it.current)+'</div></div>'+
+      '<div class="field rec"><div class="lbl"><i style="background:var(--ok)"></i>NADCA recommendation</div>'+
+        '<div class="box">'+esc(it.recommended)+'</div></div>'+
+      '<div class="clause"><span class="cn">Reference:</span>'+
+        '<a href="'+pageUrl+'" target="_blank" rel="noopener">📄 '+esc(it.ref.clause)+
+        ' · open p.'+it.ref.page+'</a></div>'+
+      '<p class="muted" style="font-size:11px;margin-top:18px">Measured values are computed from the tessellated geometry and are approximate; confirm against the model and the cited clause.</p>';
+    Array.prototype.forEach.call($('r-list').children,function(c){
+      c.classList.toggle('active',+c.dataset.i===i);});
+    var act=$('r-list').children[i]; if(act) act.scrollIntoView({block:'nearest'});
+    paint();
+  }
+  function showEmpty(){
+    $('r-badge').className='badge ok'; $('r-badge').textContent='No concerns';
+    $('r-title').textContent='No flagged features';
+    $('r-sub').textContent='Nothing tripped the active aluminum checks.';
+    $('r-body').innerHTML='<p class="muted">With the current pull axis ('+analysis.pullName+
+      '), no surfaces violated the draft, sharp-radius or hole checks. Try a different pull axis if needed.</p>';
+  }
+  function esc(s){return String(s).replace(/[&<>]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+
+  // ---- file loading ----
+  function loadFile(file){
+    fileName=file.name;
+    $('loading').classList.add('show'); $('loadtxt').textContent='Reading file…';
+    var rd=new FileReader();
+    rd.onload=function(){
+      stepText=rd.result;
+      $('loadtxt').textContent='Loading geometry kernel…';
+      initOCCT().then(function(){
+        $('loadtxt').textContent='Tessellating geometry…';
+        setTimeout(function(){
+          try{
+            var bytes=new TextEncoder().encode(stepText);
+            var res=occt.ReadStepFile(bytes,null);
+            if(!res.success||!res.meshes.length) throw new Error('Could not read a solid from this STEP file.');
+            meshRaw=res.meshes[0];
+            $('drop').classList.add('hide');
+            buildMesh({position:meshRaw.attributes.position.array,index:meshRaw.index.array,
+                       faces:meshRaw.brep_faces.map(function(f){return {first:f.first,last:f.last};})});
+            runAnalysis();
+          }catch(e){ alert('Sorry — could not analyze this file.\n'+e.message); }
+          $('loading').classList.remove('show');
+        },30);
+      }).catch(function(e){
+        $('loading').classList.remove('show');
+        alert('Failed to start geometry kernel: '+e.message);
+      });
+    };
+    rd.readAsText(file);
+  }
+
+  // ---- wire UI ----
+  function wire(){
+    var fi=$('file');
+    $('dropcard').addEventListener('click',function(){fi.click();});
+    fi.addEventListener('change',function(){if(fi.files.length)loadFile(fi.files[0]);});
+    var dc=$('dropcard');
+    ['dragover','dragenter'].forEach(function(e){$('drop').addEventListener(e,function(ev){ev.preventDefault();dc.classList.add('hover');});});
+    ['dragleave'].forEach(function(e){$('drop').addEventListener(e,function(ev){ev.preventDefault();dc.classList.remove('hover');});});
+    $('drop').addEventListener('drop',function(ev){ev.preventDefault();dc.classList.remove('hover');
+      if(ev.dataTransfer.files.length)loadFile(ev.dataTransfer.files[0]);});
+    $('reload').addEventListener('click',function(){fi.value='';$('drop').classList.remove('hide');});
+    $('axis').addEventListener('change',function(){if(meshRaw)runAnalysis();});
+    $('next').addEventListener('click',function(){if(analysis&&analysis.items.length)select((active+1)%analysis.items.length);});
+    $('prev').addEventListener('click',function(){if(analysis&&analysis.items.length)select((active-1+analysis.items.length)%analysis.items.length);});
+    document.addEventListener('keydown',function(e){
+      if(!analysis||!analysis.items.length)return;
+      if(e.key==='ArrowRight')select((active+1)%analysis.items.length);
+      if(e.key==='ArrowLeft')select((active-1+analysis.items.length)%analysis.items.length);
+    });
+  }
+
+  // ---- boot ----
+  if(!window.__OCCT_WASM_B64||!window.THREE||!window.occtimportjs||!window.DfMEngine){
+    document.body.innerHTML='<div style="padding:40px;color:#f85149;font-family:sans-serif">'+
+      'Asset files missing. Keep <b>DfM-Casting-Checker.html</b> next to its <b>dfm-assets</b> folder.</div>';
+    return;
+  }
+  initScene(); wire();
+})();
+</script>
+</body>
+</html>
