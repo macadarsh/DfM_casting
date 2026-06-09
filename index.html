@@ -165,7 +165,8 @@
     <canvas id="canvas"></canvas>
     <canvas id="triad" title="Model orientation (X/Y/Z)"></canvas>
     <div class="legend">
-      <div><i style="background:#f24338"></i>Concern</div>
+      <div><i style="background:#f24338"></i>Critical</div>
+      <div><i style="background:#e6c43a"></i>Minor / verify</div>
       <div><i style="background:#4a9eff"></i>Pull-direction face</div>
       <div><i style="background:#3fb950"></i>OK surface</div>
     </div>
@@ -223,10 +224,13 @@
       mode='empty', pullFaceIdx=-1, pullVec=null, arrow=null,
       triScene=null, triCam=null, triRenderer=null, triReady=false;
 
-  // face colors:  green = OK,  red = concern,  bright red = active concern,
-  //               blue = pull-direction face,  grey = neutral (pre-analysis)
+  // face colors:  green = OK,  red = critical concern,  yellow = minor / verify,
+  //               *Active variants are brighter*,  blue = pull-direction face,
+  //               grey = neutral (pre-analysis)
   var COL={
-    ok:[0.247,0.725,0.314], concern:[0.58,0.16,0.14], active:[0.95,0.27,0.22],
+    ok:[0.247,0.725,0.314],
+    crit:[0.55,0.15,0.13],  critActive:[0.97,0.27,0.22],
+    warn:[0.62,0.47,0.10],  warnActive:[0.98,0.80,0.22],
     pull:[0.29,0.62,1.0],   neutral:[0.49,0.55,0.63]
   };
 
@@ -354,16 +358,22 @@
   function paint(){
     if(!geom) return;
     var col=geom.attributes.color.array, nTri=triFace.length;
-    var concernSet={}, activeSet={};
+    var faceSev={}, activeSet={};   // faceSev: 3=crit(red) 2/1=warn/info(yellow)
     if(mode==='results' && analysis){
-      analysis.items.forEach(function(it){it.faces.forEach(function(f){concernSet[f]=1;});});
+      analysis.items.forEach(function(it){
+        var rank={crit:3,warn:2,info:1}[it.sev]||0;
+        it.faces.forEach(function(f){ if(rank>(faceSev[f]||0)) faceSev[f]=rank; });
+      });
       if(active>=0) analysis.items[active].faces.forEach(function(f){activeSet[f]=1;});
     }
     for(var t=0;t<nTri;t++){
       var f=triFace[t], c;
       if(f===pullFaceIdx && pullFaceIdx>=0) c=COL.pull;
       else if(mode==='results'){
-        c = activeSet[f]?COL.active : concernSet[f]?COL.concern : COL.ok;
+        var s=faceSev[f]||0, a=activeSet[f];
+        if(s===3)      c = a?COL.critActive:COL.crit;   // critical -> red
+        else if(s>=1)  c = a?COL.warnActive:COL.warn;   // minor/verify -> yellow
+        else           c = COL.ok;                      // ok -> green
       } else {
         c=COL.neutral;
       }
@@ -468,7 +478,7 @@
     var sevName={crit:'Critical',warn:'Warning',info:'Verify',ok:'OK'}[it.sev];
     $('r-badge').className='badge '+it.sev; $('r-badge').textContent='Item '+it.n+' · '+sevName;
     $('r-title').textContent=it.type;
-    $('r-sub').textContent='Highlighted in red on the model'+
+    $('r-sub').textContent='Highlighted on the model'+
       (it.faces.length>1?' ('+it.faces.length+' faces)':'')+'.';
     var pageUrl=analysis.PDF+'#page='+it.ref.page;
     $('r-body').innerHTML=
@@ -559,8 +569,8 @@
             $('drop').classList.add('hide');
             buildMesh({position:meshRaw.attributes.position.array,index:meshRaw.index.array,
                        faces:meshRaw.brep_faces.map(function(f){return {first:f.first,last:f.last};})});
-            computeFaceInfo();
-            resetForNewFile();
+            resetForNewFile();      // reset state BEFORE computing face info
+            computeFaceInfo();      // populate faceInfo used for pull-face picking
             fillBasicStats();
             setMode('pick');
             paint();
