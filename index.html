@@ -146,6 +146,7 @@
   <button id="autoaxis" style="display:none">Auto (longest axis)</button>
   <button id="analyse" class="primary" style="display:none">Analyse ▶</button>
   <button id="changepull" style="display:none">Change pull face</button>
+  <button id="flippull" style="display:none">⇅ Flip direction</button>
 </div>
 
 <!-- ============ STEP GUIDE ============ -->
@@ -414,6 +415,14 @@
     setMode('ready');
     updateArrow(); paint();
   }
+  function flipPullVec(){
+    if(!pullVec) return;
+    pullVec=[-pullVec[0],-pullVec[1],-pullVec[2]];
+    updateArrow();
+    if(mode==='results') runAnalysis();
+    else paint();
+  }
+
   function useAutoAxis(){
     if(!geom) return;
     var bb=geom.boundingBox, d=[bb.max.x-bb.min.x,bb.max.y-bb.min.y,bb.max.z-bb.min.z];
@@ -518,6 +527,7 @@
     $('autoaxis').style.display  =(m==='pick')?'inline-block':'none';
     $('analyse').style.display   =(m==='ready')?'inline-block':'none';
     $('changepull').style.display=(m==='results')?'inline-block':'none';
+    $('flippull').style.display  =(m==='ready'||m==='results')?'inline-block':'none';
     $('pickhint').classList.toggle('show', m==='pick');
     if(m==='results') return; // panel filled by select()/showEmpty()
     $('r-list').innerHTML='';
@@ -601,6 +611,7 @@
     $('analyse').addEventListener('click',runAnalysis);
     $('changepull').addEventListener('click',function(){
       analysis=null; active=-1; setMode('pick'); paint();});
+    $('flippull').addEventListener('click',flipPullVec);
     $('next').addEventListener('click',function(){if(analysis&&analysis.items.length)select((active+1)%analysis.items.length);});
     $('prev').addEventListener('click',function(){if(analysis&&analysis.items.length)select((active-1+analysis.items.length)%analysis.items.length);});
     document.addEventListener('keydown',function(e){
