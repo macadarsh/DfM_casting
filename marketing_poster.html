@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DfM Casting Checker — Marketing Poster</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: #0a0d12;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  .poster {
+    width: 1200px;
+    height: 720px;
+    background: linear-gradient(135deg, #0d1520 0%, #0a111e 40%, #061018 100%);
+    border-radius: 20px;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #1e2d40;
+    box-shadow: 0 40px 120px rgba(0,0,0,.8), 0 0 0 1px rgba(74,158,255,.08);
+  }
+
+  /* === Background decorative elements === */
+  .bg-grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(74,158,255,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(74,158,255,.04) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+  }
+
+  .bg-glow-blue {
+    position: absolute;
+    width: 600px; height: 600px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(74,158,255,.12) 0%, transparent 70%);
+    top: -150px; right: -100px;
+    pointer-events: none;
+  }
+
+  .bg-glow-cyan {
+    position: absolute;
+    width: 400px; height: 400px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(0,210,190,.07) 0%, transparent 70%);
+    bottom: -80px; left: 60px;
+    pointer-events: none;
+  }
+
+  .bg-glow-purple {
+    position: absolute;
+    width: 300px; height: 300px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(130,80,255,.08) 0%, transparent 70%);
+    top: 200px; left: 400px;
+    pointer-events: none;
+  }
+
+  /* === Top bar === */
+  .topbar {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 44px 0;
+  }
+
+  .logo-mark {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 44px; height: 44px;
+    background: linear-gradient(135deg, #4a9eff, #0066cc);
+    border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+    box-shadow: 0 4px 20px rgba(74,158,255,.4);
+    position: relative;
+    overflow: hidden;
+  }
+  .logo-icon::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,.2) 0%, transparent 60%);
+  }
+
+  .logo-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .logo-text .name {
+    font-size: 17px;
+    font-weight: 800;
+    color: #e6edf3;
+    letter-spacing: -.2px;
+  }
+  .logo-text .sub {
+    font-size: 10.5px;
+    color: #4a9eff;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  .badge-nadca {
+    background: rgba(74,158,255,.12);
+    border: 1px solid rgba(74,158,255,.3);
+    color: #4a9eff;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .8px;
+    text-transform: uppercase;
+    padding: 6px 14px;
+    border-radius: 20px;
+  }
+
+  /* === Main content === */
+  .content {
+    position: relative;
+    z-index: 10;
+    flex: 1;
+    display: flex;
+    align-items: stretch;
+    padding: 0 44px;
+    gap: 40px;
+  }
+
+  /* --- Left column --- */
+  .col-left {
+    flex: 1.15;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding-top: 10px;
+    padding-bottom: 28px;
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #4a9eff;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .eyebrow::before {
+    content: '';
+    display: inline-block;
+    width: 24px; height: 2px;
+    background: #4a9eff;
+    border-radius: 2px;
+  }
+
+  .headline {
+    font-size: 50px;
+    font-weight: 900;
+    line-height: 1.05;
+    letter-spacing: -1.5px;
+    color: #e6edf3;
+    margin-bottom: 10px;
+  }
+  .headline .accent {
+    background: linear-gradient(90deg, #4a9eff, #00d2be);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .tagline {
+    font-size: 16px;
+    color: #8da4bf;
+    line-height: 1.6;
+    max-width: 440px;
+    margin-bottom: 32px;
+    font-weight: 400;
+  }
+
+  /* Key feature pills */
+  .pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 9px;
+    margin-bottom: 36px;
+  }
+  .pill {
+    background: rgba(74,158,255,.1);
+    border: 1px solid rgba(74,158,255,.25);
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #9ec8ff;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .pill .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #4a9eff;
+    flex-shrink: 0;
+  }
+
+  /* CTA */
+  .cta-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .cta-btn {
+    background: linear-gradient(135deg, #4a9eff, #2277dd);
+    color: #fff;
+    border: none;
+    padding: 13px 28px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 24px rgba(74,158,255,.4);
+    letter-spacing: .2px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .cta-link {
+    font-size: 13px;
+    color: #5b7fa0;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  /* --- Right column: visual card --- */
+  .col-right {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-top: 20px;
+    padding-bottom: 28px;
+  }
+
+  .app-mockup {
+    width: 100%;
+    max-width: 490px;
+    background: #111820;
+    border: 1px solid #1e2d40;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 20px 80px rgba(0,0,0,.6), 0 0 0 1px rgba(74,158,255,.06);
+  }
+
+  .mockup-bar {
+    background: #161c24;
+    border-bottom: 1px solid #1e2d40;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .dots { display: flex; gap: 6px; }
+  .dots span {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #2a3543;
+  }
+  .dots span:first-child { background: #f85149; }
+  .dots span:nth-child(2) { background: #d29922; }
+  .dots span:nth-child(3) { background: #3fb950; }
+  .mockup-url {
+    flex: 1;
+    background: #0e1217;
+    border: 1px solid #2a3543;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    color: #5b7fa0;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .lock-icon { color: #3fb950; }
+
+  .mockup-body {
+    padding: 0;
+  }
+
+  /* Mini 3D viewer simulation */
+  .viewer-area {
+    height: 185px;
+    background: radial-gradient(ellipse at 40% 40%, #19252f 0%, #0c1319 100%);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-bottom: 1px solid #1e2d40;
+    overflow: hidden;
+  }
+
+  /* SVG 3D part silhouette */
+  .part-svg {
+    filter: drop-shadow(0 0 20px rgba(74,158,255,.5));
+  }
+
+  .viewer-label {
+    position: absolute;
+    top: 10px; left: 12px;
+    font-size: 10px; color: #4a6a8a;
+    background: rgba(10,16,24,.7);
+    padding: 3px 8px; border-radius: 5px;
+  }
+
+  .viewer-legend {
+    position: absolute;
+    top: 10px; right: 12px;
+    display: flex; flex-direction: column; gap: 4px;
+    font-size: 10px;
+  }
+  .legend-row { display: flex; align-items: center; gap: 5px; color: #8da4bf; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; }
+
+  /* Stats row */
+  .stats-row {
+    display: flex;
+    border-bottom: 1px solid #1e2d40;
+  }
+  .stat-box {
+    flex: 1;
+    padding: 12px 14px;
+    border-right: 1px solid #1e2d40;
+  }
+  .stat-box:last-child { border-right: none; }
+  .stat-box .sk { font-size: 9px; text-transform: uppercase; letter-spacing: .7px; color: #4a6a8a; margin-bottom: 3px; }
+  .stat-box .sv { font-size: 17px; font-weight: 700; }
+  .sv.crit { color: #f85149; }
+  .sv.warn { color: #d29922; }
+  .sv.ok { color: #3fb950; }
+
+  /* Issue list */
+  .issue-list {
+    padding: 10px 14px;
+  }
+  .issue-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 7px 0;
+    border-bottom: 1px solid #151d27;
+  }
+  .issue-item:last-child { border-bottom: none; }
+  .issue-sev {
+    font-size: 9px; font-weight: 700; padding: 2px 7px;
+    border-radius: 10px; flex-shrink: 0; margin-top: 1px;
+    text-transform: uppercase; letter-spacing: .4px;
+  }
+  .issue-sev.c { background: rgba(248,81,73,.18); color: #f85149; }
+  .issue-sev.w { background: rgba(210,153,34,.18); color: #d29922; }
+  .issue-sev.i { background: rgba(88,166,255,.18); color: #58a6ff; }
+  .issue-text { font-size: 11px; color: #8da4bf; line-height: 1.4; }
+  .issue-text b { color: #c9d4e0; font-weight: 600; }
+
+  /* === Bottom bar === */
+  .bottombar {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    padding: 0 44px;
+    border-top: 1px solid #1a2433;
+    background: rgba(10,14,20,.5);
+    height: 62px;
+    flex-shrink: 0;
+  }
+
+  .feat-block {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 20px 0 0;
+    border-right: 1px solid #1e2d40;
+    height: 100%;
+  }
+  .feat-block:last-child { border-right: none; padding-right: 0; padding-left: 20px; }
+  .feat-block:not(:first-child):not(:last-child) { padding-left: 20px; }
+
+  .feat-icon {
+    width: 36px; height: 36px; flex-shrink: 0;
+    border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px;
+  }
+  .feat-icon.blue  { background: rgba(74,158,255,.12); }
+  .feat-icon.green { background: rgba(63,185,80,.12); }
+  .feat-icon.orange{ background: rgba(210,153,34,.12); }
+  .feat-icon.purple{ background: rgba(130,80,255,.12); }
+
+  .feat-text { display: flex; flex-direction: column; gap: 1px; }
+  .feat-text .ft { font-size: 12px; font-weight: 700; color: #d4dfe9; }
+  .feat-text .fd { font-size: 10.5px; color: #4a6a8a; line-height: 1.35; }
+
+</style>
+</head>
+<body>
+<div class="poster">
+  <!-- Background -->
+  <div class="bg-grid"></div>
+  <div class="bg-glow-blue"></div>
+  <div class="bg-glow-cyan"></div>
+  <div class="bg-glow-purple"></div>
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="logo-mark">
+      <div class="logo-icon">⬡</div>
+      <div class="logo-text">
+        <div class="name">DfM Casting Checker</div>
+        <div class="sub">Design for Manufacturing · Aluminum</div>
+      </div>
+    </div>
+    <div class="badge-nadca">NADCA Compliant · 2024</div>
+  </div>
+
+  <!-- Main content -->
+  <div class="content">
+
+    <!-- Left column -->
+    <div class="col-left">
+      <div class="eyebrow">Instant Design Validation</div>
+
+      <h1 class="headline">
+        Smarter Die Casting<br>
+        <span class="accent">DfM, right in<br>your browser.</span>
+      </h1>
+
+      <p class="tagline">
+        Upload any 3D part and get real-time NADCA compliance checks —
+        wall thickness, draft angles, undercuts, ribs — rendered live
+        in a full 3D viewer. No installs. No servers. No data leaves your machine.
+      </p>
+
+      <div class="pills">
+        <div class="pill"><span class="dot"></span> Wall Thickness Analysis</div>
+        <div class="pill"><span class="dot"></span> Draft Angle Checker</div>
+        <div class="pill"><span class="dot"></span> Undercut Detection</div>
+        <div class="pill"><span class="dot"></span> Rib &amp; Boss Validation</div>
+        <div class="pill"><span class="dot"></span> Parting Line Review</div>
+        <div class="pill"><span class="dot"></span> Fillet Radius Check</div>
+      </div>
+
+      <div class="cta-row">
+        <div class="cta-btn">
+          ▶&nbsp; Open in Browser
+        </div>
+        <div class="cta-link">View NADCA Standards →</div>
+      </div>
+    </div>
+
+    <!-- Right column: app mockup -->
+    <div class="col-right">
+      <div class="app-mockup">
+        <!-- Browser chrome -->
+        <div class="mockup-bar">
+          <div class="dots"><span></span><span></span><span></span></div>
+          <div class="mockup-url">
+            <span class="lock-icon">🔒</span>
+            file:///DfM_casting/index.html
+          </div>
+        </div>
+
+        <!-- Viewer -->
+        <div class="viewer-area">
+          <div class="viewer-label">3D Viewer · Drag to orbit</div>
+          <div class="viewer-legend">
+            <div class="legend-row"><div class="legend-dot" style="background:#3fb950"></div> OK</div>
+            <div class="legend-row"><div class="legend-dot" style="background:#d29922"></div> Warning</div>
+            <div class="legend-row"><div class="legend-dot" style="background:#f85149"></div> Critical</div>
+          </div>
+
+          <!-- Isometric die-cast part illustration -->
+          <svg class="part-svg" width="260" height="160" viewBox="0 0 260 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- Base block (isometric) -->
+            <polygon points="130,20 230,70 230,130 130,80" fill="#1a3a5c" stroke="#2a6aaa" stroke-width="1.2"/>
+            <polygon points="30,70 130,20 130,80 30,130" fill="#1e4570" stroke="#2a6aaa" stroke-width="1.2"/>
+            <polygon points="30,130 130,80 230,130 130,180" fill="#162e48" stroke="#2a6aaa" stroke-width="1.2"/>
+
+            <!-- Highlighted face: critical wall thickness -->
+            <polygon points="130,20 180,45 180,80 130,55" fill="rgba(248,81,73,.35)" stroke="#f85149" stroke-width="1.5"/>
+            <polygon points="130,55 180,80 180,110 130,85" fill="rgba(248,81,73,.18)" stroke="#f85149" stroke-width=".8" stroke-dasharray="4,3"/>
+
+            <!-- Warning region -->
+            <polygon points="80,45 130,20 130,55 80,80" fill="rgba(210,153,34,.25)" stroke="#d29922" stroke-width="1.2"/>
+
+            <!-- OK region -->
+            <polygon points="30,70 80,45 80,80 30,105" fill="rgba(63,185,80,.22)" stroke="#3fb950" stroke-width="1.2"/>
+
+            <!-- Top face highlights -->
+            <line x1="130" y1="20" x2="130" y2="80" stroke="#4a9eff" stroke-width=".8" stroke-dasharray="3,4" opacity=".5"/>
+            <line x1="80" y1="45" x2="180" y2="45" stroke="#4a9eff" stroke-width=".6" opacity=".3"/>
+
+            <!-- Boss feature on top -->
+            <ellipse cx="155" cy="38" rx="16" ry="8" fill="#1a3a5c" stroke="#f85149" stroke-width="1.5"/>
+            <ellipse cx="155" cy="35" rx="16" ry="8" fill="#0d2035" stroke="#f85149" stroke-width="1.2"/>
+
+            <!-- Rib feature -->
+            <polygon points="90,60 110,50 110,110 90,120" fill="#1f4060" stroke="#d29922" stroke-width="1.2"/>
+
+            <!-- Annotation lines -->
+            <line x1="180" y1="50" x2="210" y2="34" stroke="#f85149" stroke-width=".9" opacity=".8"/>
+            <circle cx="210" cy="32" r="3" fill="#f85149"/>
+            <text x="215" y="30" font-size="8" fill="#f85149" font-family="Inter,sans-serif" font-weight="600">t = 1.1mm</text>
+
+            <line x1="80" y1="62" x2="50" y2="44" stroke="#d29922" stroke-width=".9" opacity=".8"/>
+            <circle cx="50" cy="42" r="3" fill="#d29922"/>
+            <text x="4" y="40" font-size="8" fill="#d29922" font-family="Inter,sans-serif" font-weight="600">Draft 0.4°</text>
+          </svg>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-row">
+          <div class="stat-box">
+            <div class="sk">Issues</div>
+            <div class="sv crit">7 Critical</div>
+          </div>
+          <div class="stat-box">
+            <div class="sk">Warnings</div>
+            <div class="sv warn">12 Warn</div>
+          </div>
+          <div class="stat-box">
+            <div class="sk">Passed</div>
+            <div class="sv ok">84 OK</div>
+          </div>
+          <div class="stat-box">
+            <div class="sk">Score</div>
+            <div class="sv" style="color:#4a9eff">73%</div>
+          </div>
+        </div>
+
+        <!-- Issue list -->
+        <div class="issue-list">
+          <div class="issue-item">
+            <div class="issue-sev c">Critical</div>
+            <div class="issue-text"><b>Wall too thin (1.1 mm)</b> — NADCA min 1.5 mm for A380 at this span</div>
+          </div>
+          <div class="issue-item">
+            <div class="issue-sev w">Warning</div>
+            <div class="issue-text"><b>Draft angle 0.4°</b> on outer face — recommend ≥ 1° for Al alloy</div>
+          </div>
+          <div class="issue-item">
+            <div class="issue-sev i">Info</div>
+            <div class="issue-text"><b>Boss height/diameter ratio 2.8</b> — approaching recommended limit of 3.0</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom feature strip -->
+  <div class="bottombar">
+    <div class="feat-block">
+      <div class="feat-icon blue">🔒</div>
+      <div class="feat-text">
+        <div class="ft">100% Local Processing</div>
+        <div class="fd">All analysis runs on your machine.<br>Zero IP leaves your office network.</div>
+      </div>
+    </div>
+    <div class="feat-block">
+      <div class="feat-icon green">🌐</div>
+      <div class="feat-text">
+        <div class="ft">No Installation Required</div>
+        <div class="fd">Just open the HTML file in any<br>modern browser — it runs instantly.</div>
+      </div>
+    </div>
+    <div class="feat-block">
+      <div class="feat-icon orange">⚡</div>
+      <div class="feat-text">
+        <div class="ft">Pure JS 3D Engine</div>
+        <div class="fd">Full 3D rendering built in JavaScript.<br>No plugins, no server, no cloud.</div>
+      </div>
+    </div>
+    <div class="feat-block">
+      <div class="feat-icon purple">📐</div>
+      <div class="feat-text">
+        <div class="ft">NADCA Standard Checks</div>
+        <div class="fd">Wall thickness, draft angles, ribs,<br>undercuts & more — all validated.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
