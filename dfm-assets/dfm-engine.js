@@ -137,7 +137,7 @@ function buildItems(faces, pull, pullName){
           var sev = draft < RULES.draftOutsideDeg ? 'crit':'warn';
           items.push({
             faces:[f.index], sev:sev, type:'Insufficient draft',
-            current:'Measured draft ≈ '+draft.toFixed(2)+'° on this wall (about the '+pullName+' pull axis). '+
+            current:'Measured draft ≈ '+draft.toFixed(2)+'° on this wall (relative to the '+pullName+' pull direction). '+
                     'Face area ≈ '+f.areaMM2.toFixed(1)+' mm².',
             recommended:'Aluminum minimum draft: '+RULES.draftInsideDeg.toFixed(1)+'° on inside walls (C=30), '+
                     RULES.draftOutsideDeg.toFixed(1)+'° on outside walls (C=60). Draft distance D = L/C.',
@@ -195,11 +195,16 @@ function run(mesh, stepText, opts){
   for(var i=0;i<P.length;i+=3){for(var a=0;a<3;a++){var v=P[i+a]*scale; if(v<lo[a])lo[a]=v; if(v>hi[a])hi[a]=v;}}
   var dim=[hi[0]-lo[0],hi[1]-lo[1],hi[2]-lo[2]];
   var faces=analyzeFaces(mesh, scale);
-  // pull axis
+  // pull axis / direction
   var pull, pn;
-  if(opts.axis!=null && opts.axis!=='auto' && opts.axis!==''){var ai=+opts.axis;pull=[0,0,0];pull[ai]=1;}
-  else {var mi=0;if(dim[1]>dim[mi])mi=1;if(dim[2]>dim[mi])mi=2;pull=[0,0,0];pull[mi]=1;}
-  pn=['X','Y','Z'][pull.indexOf(1)];
+  if(opts.pullVec){
+    pull=norm(opts.pullVec);
+    pn='selected';
+  } else if(opts.axis!=null && opts.axis!=='auto' && opts.axis!==''){
+    var ai=+opts.axis; pull=[0,0,0]; pull[ai]=1; pn=['X','Y','Z'][ai];
+  } else {
+    var mi=0; if(dim[1]>dim[mi])mi=1; if(dim[2]>dim[mi])mi=2; pull=[0,0,0]; pull[mi]=1; pn=['X','Y','Z'][mi];
+  }
   var items=buildItems(faces, pull, pn);
   var census={planar:0,cylindrical:0,conical:0,empty:0};
   faces.forEach(function(f){census[f.empty?'empty':f.kind]++;});

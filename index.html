@@ -8,7 +8,7 @@
   :root{
     --bg:#0e1217; --panel:#161c24; --panel2:#1f2832; --line:#2a3543;
     --txt:#e6edf3; --mut:#90a0b2; --accent:#4a9eff;
-    --ok:#3fb950; --warn:#d29922; --crit:#f85149; --info:#58a6ff;
+    --ok:#3fb950; --warn:#d29922; --crit:#f85149; --info:#58a6ff; --pull:#4a9eff;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
@@ -31,6 +31,20 @@
   button:hover,select:hover{border-color:var(--accent)}
   button.primary{background:var(--accent);border-color:var(--accent);color:#06121f;font-weight:650}
 
+  /* ---------- step guide strip ---------- */
+  #steps{flex:none;display:flex;align-items:center;gap:6px;padding:8px 18px;
+    background:var(--panel);border-bottom:1px solid var(--line);font-size:12px;flex-wrap:wrap}
+  #steps .step{display:flex;align-items:center;gap:8px;color:var(--mut);
+    padding:4px 12px;border-radius:20px;border:1px solid transparent;transition:.15s}
+  #steps .step b{display:inline-flex;width:19px;height:19px;border-radius:50%;
+    background:var(--panel2);color:var(--mut);align-items:center;justify-content:center;
+    font-size:11px;border:1px solid var(--line)}
+  #steps .step.cur{color:var(--txt);border-color:var(--accent);background:rgba(74,158,255,.10)}
+  #steps .step.cur b{background:var(--accent);color:#06121f;border-color:var(--accent)}
+  #steps .step.done{color:var(--ok)}
+  #steps .step.done b{background:rgba(63,185,80,.22);color:var(--ok);border-color:transparent}
+  #steps .sep{color:var(--mut);opacity:.45;font-size:13px}
+
   /* ---------- main split ---------- */
   #main{flex:1;display:flex;min-height:0}
   #left{flex:1.45;position:relative;min-width:0;background:
@@ -40,16 +54,23 @@
     background:var(--panel);display:flex;flex-direction:column;min-height:0}
 
   /* viewer overlays */
-  .vhint{position:absolute;left:14px;bottom:12px;color:var(--mut);font-size:11px;
+  .vhint{position:absolute;left:14px;top:12px;color:var(--mut);font-size:11px;
     background:rgba(10,14,18,.6);padding:5px 9px;border-radius:6px;pointer-events:none}
   .legend{position:absolute;right:14px;top:12px;display:flex;flex-direction:column;gap:5px;
     background:rgba(10,14,18,.55);padding:8px 10px;border-radius:7px;font-size:11px}
   .legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+  #triad{position:absolute;left:12px;bottom:12px;width:96px;height:96px;pointer-events:none}
   #navbar{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;
     display:flex;align-items:center;gap:10px;background:rgba(12,16,22,.82);
     border:1px solid var(--line);border-radius:10px;padding:7px 10px}
   #navbar button{padding:5px 12px;font-weight:650}
   #navbar .pos{min-width:64px;text-align:center;font-variant-numeric:tabular-nums}
+  /* pick prompt banner over viewer */
+  #pickhint{position:absolute;left:50%;top:16px;transform:translateX(-50%);
+    background:rgba(74,158,255,.14);border:1px solid var(--accent);color:var(--txt);
+    padding:7px 14px;border-radius:20px;font-size:12.5px;display:none;
+    box-shadow:0 2px 14px rgba(0,0,0,.35)}
+  #pickhint.show{display:block}
 
   /* ---------- right panel ---------- */
   .rhead{flex:none;padding:14px 18px;border-bottom:1px solid var(--line)}
@@ -121,24 +142,35 @@
   <div class="stat"><span class="k">Warnings</span><span class="v warn" id="s-warn">—</span></div>
   <div class="stat"><span class="k">Items</span><span class="v" id="s-items">—</span></div>
   <div class="spacer"></div>
-  <label class="muted" style="font-size:12px">Pull axis</label>
-  <select id="axis" title="Ejection / pull direction">
-    <option value="auto">Auto (longest)</option>
-    <option value="0">X</option><option value="1">Y</option><option value="2">Z</option>
-  </select>
   <button id="reload">Load file</button>
+  <button id="autoaxis" style="display:none">Auto (longest axis)</button>
+  <button id="analyse" class="primary" style="display:none">Analyse ▶</button>
+  <button id="changepull" style="display:none">Change pull face</button>
+</div>
+
+<!-- ============ STEP GUIDE ============ -->
+<div id="steps">
+  <div class="step" data-s="1"><b>1</b> Import file</div>
+  <span class="sep">›</span>
+  <div class="step" data-s="2"><b>2</b> Pick pull-direction face</div>
+  <span class="sep">›</span>
+  <div class="step" data-s="3"><b>3</b> Analyse</div>
+  <span class="sep">›</span>
+  <div class="step" data-s="4"><b>4</b> Review results</div>
 </div>
 
 <!-- ============ MAIN SPLIT ============ -->
 <div id="main">
   <div id="left">
     <canvas id="canvas"></canvas>
+    <canvas id="triad" title="Model orientation (X/Y/Z)"></canvas>
     <div class="legend">
-      <div><i style="background:#f85149"></i>Selected concern</div>
-      <div><i style="background:#d29922"></i>Other concern</div>
-      <div><i style="background:#7d8da0"></i>OK surface</div>
+      <div><i style="background:#f24338"></i>Concern</div>
+      <div><i style="background:#4a9eff"></i>Pull-direction face</div>
+      <div><i style="background:#3fb950"></i>OK surface</div>
     </div>
-    <div class="vhint">drag = rotate · scroll = zoom · right-drag = pan · click a red/amber face to select</div>
+    <div class="vhint">drag = rotate · scroll = zoom · right-drag = pan</div>
+    <div id="pickhint">Click the face that is normal to the pull / ejection direction</div>
     <div id="navbar" style="display:none">
       <button id="prev">‹ Prev</button>
       <span class="pos" id="pos">0 / 0</span>
@@ -161,12 +193,12 @@
   <!-- ============ RIGHT DETAIL PANEL ============ -->
   <div id="right">
     <div class="rhead">
-      <span class="badge info" id="r-badge">—</span>
-      <h2 id="r-title">Load a model to begin</h2>
-      <div class="sub" id="r-sub">The 3D view will highlight each area of concern.</div>
+      <span class="badge info" id="r-badge">Step 1</span>
+      <h2 id="r-title">Import a STEP file</h2>
+      <div class="sub" id="r-sub">Everything runs locally in your browser.</div>
     </div>
     <div class="rbody" id="r-body">
-      <p class="muted">Findings will appear here. Use Prev / Next to walk through items 1…N; the selected surface is shown in red on the left.</p>
+      <p class="muted">Drop a .step / .stp file on the viewer, or click it to choose one. Then you'll set the pull direction and run the check.</p>
     </div>
     <div class="rlist" id="r-list"></div>
   </div>
@@ -187,9 +219,16 @@
   // ---- state ----
   var occt=null, meshRaw=null, stepText=null, fileName='', analysis=null,
       active=-1, geom=null, mesh3=null, scene,camera,renderer,controls,
-      raycaster, triFace=null;
+      raycaster, triFace=null, faceInfo=null,
+      mode='empty', pullFaceIdx=-1, pullVec=null, arrow=null,
+      triScene=null, triCam=null, triRenderer=null, triReady=false;
 
-  var COL={base:[0.49,0.55,0.63], concern:[0.82,0.6,0.13], active:[0.97,0.32,0.29]};
+  // face colors:  green = OK,  red = concern,  bright red = active concern,
+  //               blue = pull-direction face,  grey = neutral (pre-analysis)
+  var COL={
+    ok:[0.247,0.725,0.314], concern:[0.58,0.16,0.14], active:[0.95,0.27,0.22],
+    pull:[0.29,0.62,1.0],   neutral:[0.49,0.55,0.63]
+  };
 
   // ---- WASM kernel init (once) ----
   function b64ToBytes(b64){
@@ -223,7 +262,9 @@
     raycaster=new THREE.Raycaster();
     cv.addEventListener('click',onPick);
     window.addEventListener('resize',resize);
-    (function loop(){requestAnimationFrame(loop);controls.update();renderer.render(scene,camera);})();
+    initTriad();
+    (function loop(){requestAnimationFrame(loop);controls.update();
+      renderer.render(scene,camera);renderTriad();})();
     resize();
   }
   function resize(){
@@ -231,9 +272,56 @@
     camera.aspect=l.clientWidth/l.clientHeight; camera.updateProjectionMatrix();
   }
 
+  // ---- orientation triad (SolidWorks-style X/Y/Z gizmo, bottom-left) ----
+  function makeAxisLabel(txt,pos,color){
+    var cv=document.createElement('canvas'); cv.width=cv.height=64;
+    var g=cv.getContext('2d');
+    g.fillStyle=color; g.font='bold 46px -apple-system,Arial,sans-serif';
+    g.textAlign='center'; g.textBaseline='middle'; g.fillText(txt,32,34);
+    var tex=new THREE.CanvasTexture(cv);
+    var sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
+    sp.position.set(pos[0],pos[1],pos[2]); sp.scale.set(0.62,0.62,0.62);
+    return sp;
+  }
+  function initTriad(){
+    var c=$('triad');
+    triRenderer=new THREE.WebGLRenderer({canvas:c,antialias:true,alpha:true});
+    triRenderer.setPixelRatio(window.devicePixelRatio||1);
+    triRenderer.setSize(96,96,false);
+    triScene=new THREE.Scene();
+    triCam=new THREE.OrthographicCamera(-1.7,1.7,1.7,-1.7,0.1,100);
+    var ax=new THREE.AxesHelper(1);          // X=red, Y=green, Z=blue (CAD convention)
+    if(ax.material){ax.material.linewidth=2;ax.material.depthTest=false;}
+    triScene.add(ax);
+    triScene.add(makeAxisLabel('X',[1.34,0,0],'#ff5b5b'));
+    triScene.add(makeAxisLabel('Y',[0,1.34,0],'#5fdc73'));
+    triScene.add(makeAxisLabel('Z',[0,0,1.34],'#6db4ff'));
+    triReady=true;
+  }
+  function renderTriad(){
+    if(!triReady||!camera||!controls) return;
+    var dir=new THREE.Vector3().subVectors(camera.position,controls.target).normalize();
+    triCam.position.copy(dir.multiplyScalar(4));
+    triCam.up.copy(camera.up);
+    triCam.lookAt(0,0,0);
+    triRenderer.render(triScene,triCam);
+  }
+
+  // ---- pull-direction arrow ----
+  function updateArrow(){
+    if(arrow){scene.remove(arrow);arrow=null;}
+    if(!pullVec||!geom) return;
+    var s=geom.boundingSphere, r=(s&&s.radius)||1, c=(s&&s.center)||new THREE.Vector3();
+    var dir=new THREE.Vector3(pullVec[0],pullVec[1],pullVec[2]).normalize();
+    var origin=c.clone().add(dir.clone().multiplyScalar(r*1.05));
+    arrow=new THREE.ArrowHelper(dir,origin,r*0.95,0x4a9eff,r*0.26,r*0.15);
+    scene.add(arrow);
+  }
+
   // build a flat (non-indexed) mesh so each triangle colours independently
   function buildMesh(m){
     if(mesh3){scene.remove(mesh3);mesh3.geometry.dispose();}
+    if(arrow){scene.remove(arrow);arrow=null;}
     var pos=m.position, idx=m.index, FR=m.faces;
     var nTri=idx.length/3;
     var verts=new Float32Array(nTri*9), cols=new Float32Array(nTri*9);
@@ -261,42 +349,87 @@
     camera.position.set(c.x+r*1.6,c.y+r*1.1,c.z+r*2.0);
     camera.near=r/100; camera.far=r*100; camera.updateProjectionMatrix();
   }
-  // set vertex colors: base / concern / active
+
+  // set vertex colors based on current mode
   function paint(){
     if(!geom) return;
     var col=geom.attributes.color.array, nTri=triFace.length;
     var concernSet={}, activeSet={};
-    if(analysis){
+    if(mode==='results' && analysis){
       analysis.items.forEach(function(it){it.faces.forEach(function(f){concernSet[f]=1;});});
       if(active>=0) analysis.items[active].faces.forEach(function(f){activeSet[f]=1;});
     }
     for(var t=0;t<nTri;t++){
-      var f=triFace[t], c= activeSet[f]?COL.active : concernSet[f]?COL.concern : COL.base;
+      var f=triFace[t], c;
+      if(f===pullFaceIdx && pullFaceIdx>=0) c=COL.pull;
+      else if(mode==='results'){
+        c = activeSet[f]?COL.active : concernSet[f]?COL.concern : COL.ok;
+      } else {
+        c=COL.neutral;
+      }
       for(var k=0;k<3;k++){var o=t*9+k*3; col[o]=c[0];col[o+1]=c[1];col[o+2]=c[2];}
     }
     geom.attributes.color.needsUpdate=true;
   }
 
   function onPick(ev){
-    if(!mesh3||!analysis) return;
+    if(!mesh3) return;
     var rect=renderer.domElement.getBoundingClientRect();
     var mx=((ev.clientX-rect.left)/rect.width)*2-1, my=-((ev.clientY-rect.top)/rect.height)*2+1;
     raycaster.setFromCamera({x:mx,y:my},camera);
     var hit=raycaster.intersectObject(mesh3);
     if(!hit.length) return;
-    var tri=hit[0].faceIndex;
-    var face=triFace[tri];
-    for(var i=0;i<analysis.items.length;i++){
-      if(analysis.items[i].faces.indexOf(face)>=0){ select(i); return; }
+    var face=triFace[hit[0].faceIndex];
+    if(mode==='pick' || mode==='ready'){ setPullFace(face); return; }
+    if(mode==='results' && analysis){
+      for(var i=0;i<analysis.items.length;i++){
+        if(analysis.items[i].faces.indexOf(face)>=0){ select(i); return; }
+      }
     }
   }
 
-  // ---- run analysis on current mesh ----
-  function runAnalysis(){
+  // ---- compute per-face normals up front (for pull-face selection) ----
+  function computeFaceInfo(){
     var mesh={position:meshRaw.attributes.position.array,
               index:meshRaw.index.array,
               faces:meshRaw.brep_faces.map(function(f){return {first:f.first,last:f.last};})};
-    analysis=window.DfMEngine.run(mesh, stepText, {axis:$('axis').value});
+    faceInfo=window.DfMEngine.analyzeFaces(mesh,1);
+  }
+
+  function setPullFace(fi){
+    if(!faceInfo) return;
+    var f=faceInfo[fi];
+    if(!f||f.empty||!f.normal) return;
+    pullFaceIdx=fi; pullVec=f.normal.slice();
+    setMode('ready');
+    updateArrow(); paint();
+  }
+  function useAutoAxis(){
+    if(!geom) return;
+    var bb=geom.boundingBox, d=[bb.max.x-bb.min.x,bb.max.y-bb.min.y,bb.max.z-bb.min.z];
+    var mi=0; if(d[1]>d[mi])mi=1; if(d[2]>d[mi])mi=2;
+    pullVec=[0,0,0]; pullVec[mi]=1; pullFaceIdx=-1;
+    setMode('ready'); updateArrow(); paint();
+  }
+
+  // ---- basic header stats (shown before analysis) ----
+  function fillBasicStats(){
+    $('s-file').textContent=fileName.length>22?fileName.slice(0,20)+'…':fileName;
+    var u=window.DfMEngine.detectUnit(stepText||'');
+    $('s-unit').textContent=u.name;
+    var bb=geom.boundingBox, d=[bb.max.x-bb.min.x,bb.max.y-bb.min.y,bb.max.z-bb.min.z];
+    $('s-env').textContent=d.map(function(v){return v.toFixed(1);}).join('×');
+    $('s-faces').textContent=faceInfo?faceInfo.length:'—';
+    $('s-crit').textContent='—'; $('s-warn').textContent='—'; $('s-items').textContent='—';
+  }
+
+  // ---- run analysis on current mesh + chosen pull direction ----
+  function runAnalysis(){
+    if(!meshRaw||!pullVec) return;
+    var mesh={position:meshRaw.attributes.position.array,
+              index:meshRaw.index.array,
+              faces:meshRaw.brep_faces.map(function(f){return {first:f.first,last:f.last};})};
+    analysis=window.DfMEngine.run(mesh, stepText, {pullVec:pullVec});
     var d=analysis.bbox.dim;
     $('s-file').textContent=fileName.length>22?fileName.slice(0,20)+'…':fileName;
     $('s-unit').textContent=analysis.unit.name;
@@ -306,6 +439,7 @@
     var warn=analysis.items.filter(function(i){return i.sev==='warn';}).length;
     $('s-crit').textContent=crit; $('s-warn').textContent=warn;
     $('s-items').textContent=analysis.items.length;
+    setMode('results');
     buildList();
     $('navbar').style.display=analysis.items.length?'flex':'none';
     if(analysis.items.length){ select(0); } else { showEmpty(); }
@@ -355,11 +489,56 @@
     $('r-badge').className='badge ok'; $('r-badge').textContent='No concerns';
     $('r-title').textContent='No flagged features';
     $('r-sub').textContent='Nothing tripped the active aluminum checks.';
-    $('r-body').innerHTML='<p class="muted">With the current pull axis ('+analysis.pullName+
-      '), no surfaces violated the draft, sharp-radius or hole checks. Try a different pull axis if needed.</p>';
+    $('r-body').innerHTML='<p class="muted">With the chosen pull direction, no surfaces violated the draft, '+
+      'sharp-radius or hole checks. If the pull direction was wrong, use <b>Change pull face</b> and try again.</p>';
   }
   function esc(s){return String(s).replace(/[&<>]/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+
+  // ---- step / mode controller (guides the user) ----
+  function setMode(m){
+    mode=m;
+    var step={empty:1,pick:2,ready:3,results:4}[m]||1;
+    Array.prototype.forEach.call(document.querySelectorAll('#steps .step'),function(ch){
+      var n=+ch.dataset.s;
+      ch.classList.toggle('done',n<step);
+      ch.classList.toggle('cur',n===step);
+    });
+    $('reload').style.display='inline-block';
+    $('autoaxis').style.display  =(m==='pick')?'inline-block':'none';
+    $('analyse').style.display   =(m==='ready')?'inline-block':'none';
+    $('changepull').style.display=(m==='results')?'inline-block':'none';
+    $('pickhint').classList.toggle('show', m==='pick');
+    if(m==='results') return; // panel filled by select()/showEmpty()
+    $('r-list').innerHTML='';
+    $('navbar').style.display='none';
+    if(m==='empty'){
+      $('r-badge').className='badge info'; $('r-badge').textContent='Step 1';
+      $('r-title').textContent='Import a STEP file';
+      $('r-sub').textContent='Everything runs locally in your browser.';
+      $('r-body').innerHTML='<p class="muted">Drop a .step / .stp file on the viewer, or click it to choose one. '+
+        'Then you\'ll set the pull direction and run the check.</p>';
+    } else if(m==='pick'){
+      $('r-badge').className='badge info'; $('r-badge').textContent='Step 2';
+      $('r-title').textContent='Select the pull-direction face';
+      $('r-sub').textContent='Click the face perpendicular to the pull / ejection direction.';
+      $('r-body').innerHTML='<p class="muted">Pick the flat face the part is pulled <b>away from</b> — its normal '+
+        'becomes the pull axis. The chosen face turns <span style="color:#4a9eff">blue</span> and a pull arrow appears. '+
+        'Not sure? Click <b>Auto (longest axis)</b> in the toolbar.</p>';
+    } else if(m==='ready'){
+      $('r-badge').className='badge info'; $('r-badge').textContent='Step 3';
+      $('r-title').textContent='Run the manufacturability check';
+      $('r-sub').textContent='Pull direction is set — shown by the blue arrow.';
+      $('r-body').innerHTML='<p class="muted">Click <b>Analyse</b> to evaluate draft, sharp internal radii and cored '+
+        'holes against NADCA aluminum guidelines. To change the direction, click another face.</p>';
+    }
+  }
+
+  function resetForNewFile(){
+    analysis=null; active=-1; pullFaceIdx=-1; pullVec=null; faceInfo=null;
+    if(arrow){scene.remove(arrow);arrow=null;}
+    ['s-file','s-unit','s-env','s-faces','s-crit','s-warn','s-items'].forEach(function(id){$(id).textContent='—';});
+  }
 
   // ---- file loading ----
   function loadFile(file){
@@ -380,7 +559,11 @@
             $('drop').classList.add('hide');
             buildMesh({position:meshRaw.attributes.position.array,index:meshRaw.index.array,
                        faces:meshRaw.brep_faces.map(function(f){return {first:f.first,last:f.last};})});
-            runAnalysis();
+            computeFaceInfo();
+            resetForNewFile();
+            fillBasicStats();
+            setMode('pick');
+            paint();
           }catch(e){ alert('Sorry — could not analyze this file.\n'+e.message); }
           $('loading').classList.remove('show');
         },30);
@@ -402,12 +585,16 @@
     ['dragleave'].forEach(function(e){$('drop').addEventListener(e,function(ev){ev.preventDefault();dc.classList.remove('hover');});});
     $('drop').addEventListener('drop',function(ev){ev.preventDefault();dc.classList.remove('hover');
       if(ev.dataTransfer.files.length)loadFile(ev.dataTransfer.files[0]);});
-    $('reload').addEventListener('click',function(){fi.value='';$('drop').classList.remove('hide');});
-    $('axis').addEventListener('change',function(){if(meshRaw)runAnalysis();});
+    $('reload').addEventListener('click',function(){
+      fi.value=''; $('drop').classList.remove('hide'); resetForNewFile(); setMode('empty');});
+    $('autoaxis').addEventListener('click',useAutoAxis);
+    $('analyse').addEventListener('click',runAnalysis);
+    $('changepull').addEventListener('click',function(){
+      analysis=null; active=-1; setMode('pick'); paint();});
     $('next').addEventListener('click',function(){if(analysis&&analysis.items.length)select((active+1)%analysis.items.length);});
     $('prev').addEventListener('click',function(){if(analysis&&analysis.items.length)select((active-1+analysis.items.length)%analysis.items.length);});
     document.addEventListener('keydown',function(e){
-      if(!analysis||!analysis.items.length)return;
+      if(mode!=='results'||!analysis||!analysis.items.length)return;
       if(e.key==='ArrowRight')select((active+1)%analysis.items.length);
       if(e.key==='ArrowLeft')select((active-1+analysis.items.length)%analysis.items.length);
     });
@@ -416,10 +603,10 @@
   // ---- boot ----
   if(!window.__OCCT_WASM_B64||!window.THREE||!window.occtimportjs||!window.DfMEngine){
     document.body.innerHTML='<div style="padding:40px;color:#f85149;font-family:sans-serif">'+
-      'Asset files missing. Keep <b>DfM-Casting-Checker.html</b> next to its <b>dfm-assets</b> folder.</div>';
+      'Asset files missing. Keep <b>index.html</b> next to its <b>dfm-assets</b> folder.</div>';
     return;
   }
-  initScene(); wire();
+  initScene(); wire(); setMode('empty');
 })();
 </script>
 </body>
