@@ -181,113 +181,122 @@ function buildItems(faces, pull, pullName){
   }
 
   // ---------- Undercut detection ----------
-  // An undercut is any surface that cannot be released by a straight pull in the chosen direction.
+  // Four complementary strategies, each catching what the others miss.
   //
-  // Strategy A — backward-facing planar faces
-  //   dot(faceNormal, pullDir) < 0  →  face looks AGAINST the pull → potential undercut.
-  //   We threshold at –sin(5°) ≈ –0.087 to absorb tessellation noise near the parting surface.
-  //   Severity split: undercut angle > 30° past perpendicular = critical, otherwise warning.
-  //
-  // Strategy B — perpendicular cylindrical / conical bores (side-core requirement)
-  //   |dot(cylinderAxis, pullDir)| < 0.5  →  bore axis within 30° of being ⊥ to pull.
-  //   These features cannot be formed by the two main die halves; a side core or slider is needed.
-  //
-  // Strategy C — lateral planar pocket walls (side-core requirement)
-  //   Planar faces whose normals are nearly perpendicular to pull (|dot| < 0.5) but which
-  //   are NOT already backward-facing (Strategy A) and which PASS the draft check (so they
-  //   show green). These are walls of internal slots, grooves, or lateral pockets that need
-  //   a side core even though their draft angle is technically acceptable.
-  //   We flag faces that are within 30° of perpendicular to pull AND are spatially inset
-  //   from the bounding-box extreme in the face's own outward-normal direction, which
-  //   indicates the face is recessed behind outer geometry rather than exposed on the surface.
+  // A  Backward planar:    dot(N, pull) < –0.087  → direct undercut, blocks straight pull.
+  // B  Perpendicular bore: |dot(axis, pull)| < 0.5 → bore axis ⊥ pull, needs side core.
+  // C  Lateral pocket wall: lateral face (|dot(N,pull)| < 0.5) that is recessed BEHIND outer
+  //    geometry in its own outward-normal direction.  Even with adequate draft, the pocket it
+  //    walls off cannot be released in a straight pull → side core required.
+  // D  Enclosed ceiling:   upward-facing face (dot(N,pull) > 0.5) that sits below the part top
+  //    AND is adjacent (within reach) to a recessed lateral wall found by Strategy C.
+  //    This is the "ceiling" of a slot or groove that opens sideways: the die cannot reach
+  //    or release it in a straight pull.
 
-  var undercutCrit=[], undercutWarn=[], sidecoreList=[], lateralPocketWalls=[];
+  var undercutCrit=[], undercutWarn=[], sidecoreList=[];
 
-  // Pre-compute pull-direction extents for Strategy C centroid-depth test
+  // --- Strategies A & B: single pass ---
+  faces.forEach(function(f){
+    if(f.empty) return;
+    if(f.kind==='planar'){
+      var dPull=dot(f.normal,pull);
+      if(dPull < -0.087){
+        var ucAngle=Math.acos(Math.max(-1,Math.min(1,dPull)))*180/Math.PI - 90;
+        f._ucAngle=ucAngle;
+        if(ucAngle > 30) undercutCrit.push(f);
+        else             undercutWarn.push(f);
+      }
+    }
+    if((f.kind==='cylindrical'||f.kind==='conical') && f.axis){
+      if(Math.abs(dot(f.axis,pull)) < 0.5) sidecoreList.push(f);
+    }
+  });
+
+  // Pull-direction extents (used by C & D)
   var pullExtMin=Infinity, pullExtMax=-Infinity;
   faces.forEach(function(f){
     if(f.empty) return;
-    var h=dot(f.centroidMM, pull);
+    var h=dot(f.centroidMM,pull);
     if(h<pullExtMin) pullExtMin=h;
     if(h>pullExtMax) pullExtMax=h;
   });
   var pullSpan=(pullExtMax-pullExtMin)||1;
 
-  // Pre-compute per-normal-direction max extent for Strategy C depth test.
-  // We bucket normals into a coarse grid and track the furthest centroid seen in each direction.
-  // This lets us ask: "is this face's centroid behind other geometry in its own normal direction?"
-  function normalKey(n){
-    // Round to nearest 0.1 in each component → ~6° resolution
-    return [Math.round(n[0]*10),Math.round(n[1]*10),Math.round(n[2]*10)].join(',');
-  }
-  var normalMaxExtent={};
+  // --- Strategy C setup: collect all lateral planar faces ---
+  // Lateral = |dot(N,pull)| < 0.5  (normal within 30° of perpendicular to pull).
+  // Exclude backward-facing (already Strategy A).
+  var lateralPlanar=[];
   faces.forEach(function(f){
     if(f.empty||f.kind!=='planar') return;
-    var absDPull=Math.abs(dot(f.normal,pull));
-    if(absDPull>=0.5) return; // not lateral enough
-    var k=normalKey(f.normal);
-    var extent=dot(f.centroidMM,f.normal);
-    if(!(k in normalMaxExtent)||extent>normalMaxExtent[k]) normalMaxExtent[k]=extent;
+    var dPull=dot(f.normal,pull);
+    if(dPull < -0.087) return;           // backward → A
+    if(Math.abs(dPull) < 0.5) lateralPlanar.push(f);
   });
 
-  faces.forEach(function(f){
-    if(f.empty) return;
-
-    // --- Strategy A: backward-facing planar faces ---
-    if(f.kind==='planar'){
-      var dPull=dot(f.normal, pull);
-      // dPull < 0 means the face normal has a component pointing OPPOSITE to pull.
-      // Threshold: –sin(5°) ≈ –0.087 (5° past perpendicular).
-      if(dPull < -0.087){
-        // "Undercut angle" = how many degrees past 90° the face tilts backward
-        var ucAngle=Math.acos(Math.max(-1,Math.min(1,dPull)))*180/Math.PI - 90;
-        f._ucAngle=ucAngle;
-        if(ucAngle > 30) undercutCrit.push(f);
-        else             undercutWarn.push(f);
-        return; // Strategy A takes priority; skip C check below
-      }
-
-      // --- Strategy C: lateral planar pocket walls ---
-      var absDPull=Math.abs(dPull);
-      if(absDPull < 0.5){  // normal within 30° of being ⊥ to pull → lateral face
-        // Skip faces already caught by the draft check (they show as red/yellow anyway)
-        var angNP=Math.acos(Math.min(1,absDPull))*180/Math.PI; // ~90° for pure laterals
-        var draft=Math.abs(angNP-90);
-        if(draft < RULES.draftInsideDeg-1e-6) return; // draft check already handles this face
-
-        // Depth test: is this face recessed behind other faces in the same outward-normal direction?
-        // If the face's normal-direction extent is significantly below the maximum for similar normals,
-        // it is hidden behind outer geometry → it walls off an internal pocket → side core needed.
-        var k=normalKey(f.normal);
-        var maxExt=(normalMaxExtent[k]!==undefined)?normalMaxExtent[k]:dot(f.centroidMM,f.normal);
-        var myExt=dot(f.centroidMM,f.normal);
-        var depthBehind=maxExt-myExt; // >0 means there is geometry further out in this direction
-
-        // Also check pull-direction position: reject faces at the very top/bottom of the part
-        // (those are likely parting-surface geometry, not enclosed pockets).
-        var pullH=dot(f.centroidMM,pull);
-        var relH=(pullH-pullExtMin)/pullSpan;
-        var atExtreme=(relH<0.05||relH>0.95);
-
-        // Flag if the face is inset (depth > 1 mm behind outermost geometry in its normal direction)
-        // OR if it sits in the middle of the part's pull-direction span (not on a parting surface).
-        // Both signals together give higher confidence; either alone is a warning worth showing.
-        if(depthBehind > 1.0 || (!atExtreme && depthBehind > 0.1)){
-          lateralPocketWalls.push(f);
-        }
-      }
+  // O(N²) depth-behind: for each lateral face F, how far is F recessed behind the
+  // furthest face centroid seen in F's outward-normal direction?
+  // depthBehind > 0 means F is hidden inside a pocket rather than on the outer surface.
+  // We project ALL face centroids (any kind) onto F's normal — the one that extends furthest
+  // in that direction represents the outer surface; F's distance behind it is depthBehind.
+  lateralPlanar.forEach(function(f){
+    var myExt=dot(f.centroidMM,f.normal), maxExt=myExt;
+    for(var gi=0;gi<faces.length;gi++){
+      if(faces[gi].empty) continue;
+      var e=dot(faces[gi].centroidMM,f.normal);
+      if(e>maxExt) maxExt=e;
     }
-
-    // --- Strategy B: perpendicular bores (side-core requirement) ---
-    if((f.kind==='cylindrical'||f.kind==='conical') && f.axis){
-      var axisPull=Math.abs(dot(f.axis, pull));
-      // axisPull = |cos(α)| where α = angle between bore axis and pull direction.
-      // < 0.5 means α > 60°, i.e. the axis is within 30° of being fully perpendicular to pull.
-      if(axisPull < 0.5) sidecoreList.push(f);
-    }
+    f._depthBehind=maxExt-myExt;
   });
 
-  // Report critical undercuts (severely backward-facing)
+  // Classify recessed lateral faces (pocket walls).
+  // Reject faces at the very top/bottom of the part (parting-surface geometry).
+  var recessedLateral=[];
+  lateralPlanar.forEach(function(f){
+    var relH=(dot(f.centroidMM,pull)-pullExtMin)/pullSpan;
+    var atExtreme=(relH<0.05||relH>0.95);
+    if(f._depthBehind > 1.0 || (!atExtreme && f._depthBehind > 0.1))
+      recessedLateral.push(f);
+  });
+
+  // Strategy C: recessed lateral walls that PASS the draft check (they currently show green).
+  // Draft-failing lateral walls are already caught by the draft-check items above.
+  var lateralPocketWalls=[];
+  recessedLateral.forEach(function(f){
+    var angNP=Math.acos(Math.min(1,Math.abs(dot(f.normal,pull))))*180/Math.PI;
+    if(Math.abs(angNP-90) >= RULES.draftInsideDeg-1e-6) lateralPocketWalls.push(f);
+  });
+
+  // --- Strategy D: enclosed ceiling faces ---
+  // An upward-facing face (dot(N,pull) > 0.5) that is:
+  //   • below the part top (relH < 0.92), AND
+  //   • within "reach" of at least one recessed lateral wall (recessedLateral from C)
+  // cannot be released by a straight pull — it is the ceiling of a lateral slot/groove.
+  // Reach is adaptive: proportional to the wall face's own size, clamped to 8–40 mm.
+  var ceilUndercuts=[];
+  if(recessedLateral.length > 0){
+    faces.forEach(function(f){
+      if(f.empty||f.kind!=='planar') return;
+      if(dot(f.normal,pull) <= 0.5) return;           // not upward-facing enough
+      var relH=(dot(f.centroidMM,pull)-pullExtMin)/pullSpan;
+      if(relH > 0.92) return;                         // at/near top parting surface → OK
+      var fPullH=dot(f.centroidMM,pull);
+      for(var i=0;i<recessedLateral.length;i++){
+        var g=recessedLateral[i];
+        // Ceiling must be AT OR ABOVE the lateral wall in the pull direction.
+        // A ceiling that is BELOW the wall centroid is not a roof of that wall's pocket.
+        if(dot(g.centroidMM,pull) > fPullH) continue;
+        var reach=Math.min(Math.max(Math.sqrt(g.areaMM2)*2.0, 8.0), 40.0);
+        var dx=f.centroidMM[0]-g.centroidMM[0];
+        var dy=f.centroidMM[1]-g.centroidMM[1];
+        var dz=f.centroidMM[2]-g.centroidMM[2];
+        if(Math.sqrt(dx*dx+dy*dy+dz*dz) < reach){ ceilUndercuts.push(f); break; }
+      }
+    });
+  }
+
+  // --- Report items ---
+
+  // Strategy A — critical undercuts
   if(undercutCrit.length){
     var maxUcAngle=0;
     undercutCrit.forEach(function(f){ if(f._ucAngle>maxUcAngle) maxUcAngle=f._ucAngle; });
@@ -305,7 +314,7 @@ function buildItems(faces, pull, pullName){
     });
   }
 
-  // Report mild / potential undercuts
+  // Strategy A — mild / potential undercuts
   if(undercutWarn.length){
     items.push({
       faces:undercutWarn.map(function(f){return f.index;}),
@@ -320,7 +329,7 @@ function buildItems(faces, pull, pullName){
     });
   }
 
-  // Report side-core requirements (perpendicular bores)
+  // Strategy B — perpendicular bores
   if(sidecoreList.length){
     var minDia=Infinity;
     sidecoreList.forEach(function(f){ var d=f.radiusMM*2; if(d<minDia) minDia=d; });
@@ -339,21 +348,38 @@ function buildItems(faces, pull, pullName){
     });
   }
 
-  // Report lateral pocket walls (Strategy C)
+  // Strategy C — lateral pocket walls (passing draft, showing green without this check)
   if(lateralPocketWalls.length){
     items.push({
       faces:lateralPocketWalls.map(function(f){return f.index;}),
       sev:'crit',
       type:'Side core required — lateral pocket / slot walls ('+lateralPocketWalls.length+' face(s))',
       current:lateralPocketWalls.length+' planar face(s) face laterally (normal within 30° of '+
-              'perpendicular to the '+pullName+' pull direction) and are recessed behind outer '+
-              'geometry — a clear sign they wall off an internal slot, groove, or pocket. '+
-              'These surfaces cannot be formed or released by a straight pull in the '+pullName+' direction.',
+              'perpendicular to the '+pullName+' pull direction) and sit recessed behind outer geometry. '+
+              'These walls form a slot, groove, or pocket that opens sideways and cannot be '+
+              'formed or released by a straight pull in the '+pullName+' direction.',
       recommended:'Options: (1) add a side core, lifter, or slide to form and release the pocket; '+
-                  '(2) redesign the slot/groove to open in the pull direction (eliminate the enclosed pocket); '+
-                  '(3) split the feature to the parting line so each die half contributes one wall; '+
-                  '(4) convert to a post-cast machined feature if production volume allows. '+
-                  'Side-core mechanisms add tooling cost, maintenance, and flash risk at the shut-off joint.',
+                  '(2) redesign the slot/groove to open in the pull direction; '+
+                  '(3) split the pocket to the parting line so each die half contributes one wall; '+
+                  '(4) machine after casting if volumes allow.',
+      ref:RULES.refUndercut, metric:0
+    });
+  }
+
+  // Strategy D — enclosed ceiling faces
+  if(ceilUndercuts.length){
+    items.push({
+      faces:ceilUndercuts.map(function(f){return f.index;}),
+      sev:'crit',
+      type:'Side core required — enclosed slot / pocket ceiling ('+ceilUndercuts.length+' face(s))',
+      current:ceilUndercuts.length+' upward-facing face(s) lie below the part top AND directly '+
+              'adjacent to recessed lateral walls (see Lateral pocket / slot walls item). '+
+              'These are the "ceiling" surfaces of features that open sideways: the die cannot '+
+              'reach or release them in a straight '+pullName+' pull without a side-core action.',
+      recommended:'Options: (1) add side cores / slides to form and release these ceiling surfaces; '+
+                  '(2) redesign the pocket so it is open at the top (remove the ceiling — through-slot); '+
+                  '(3) extend the pocket to the parting line so the ceiling disappears; '+
+                  '(4) machine after casting.',
       ref:RULES.refUndercut, metric:0
     });
   }
