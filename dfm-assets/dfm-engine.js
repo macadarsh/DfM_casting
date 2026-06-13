@@ -117,10 +117,11 @@ var PDF='NADCA-Product-Standards-for-Die-Casting.pdf';
 var RULES={
   draftInsideDeg:1.9, draftOutsideDeg:0.95, draftHoleDeg:2.86,
   filletSharpMM:0.5, minWallMM:1.0,
-  refDraft:{clause:'NADCA S-4A-7-15 — Draft Requirements', page:105},
-  refFillet:{clause:'NADCA Sec. 6, p.6-4 — Fillets', page:178},
-  refHole:{clause:'NADCA P-4A-9 / p.4A-31 — Cored Holes', page:115},
-  refWall:{clause:'NADCA p.4A-31/32 — Wall Thickness', page:115}
+  refDraft:   {clause:'NADCA S-4A-7-15 — Draft Requirements',            page:105},
+  refFillet:  {clause:'NADCA Sec. 6, p.6-4 — Fillets',                  page:178},
+  refHole:    {clause:'NADCA P-4A-9 / p.4A-31 — Cored Holes',           page:115},
+  refWall:    {clause:'NADCA p.4A-31/32 — Wall Thickness',               page:115},
+  refUndercut:{clause:'NADCA Sec. 3 — Parting Line, Draft & Undercuts',  page: 84}
 };
 
 // build concern items. Each item references one or more face indices (faces[]).
@@ -178,6 +179,100 @@ function buildItems(faces, pull, pullName){
       ref:RULES.refDraft, metric:0
     });
   }
+
+  // ---------- Undercut detection ----------
+  // An undercut is any surface that cannot be released by a straight pull in the chosen direction.
+  //
+  // Strategy A — backward-facing planar faces
+  //   dot(faceNormal, pullDir) < 0  →  face looks AGAINST the pull → potential undercut.
+  //   We threshold at –sin(5°) ≈ –0.087 to absorb tessellation noise near the parting surface.
+  //   Severity split: undercut angle > 30° past perpendicular = critical, otherwise warning.
+  //
+  // Strategy B — perpendicular cylindrical / conical bores (side-core requirement)
+  //   |dot(cylinderAxis, pullDir)| < 0.5  →  bore axis within 30° of being ⊥ to pull.
+  //   These features cannot be formed by the two main die halves; a side core or slider is needed.
+
+  var undercutCrit=[], undercutWarn=[], sidecoreList=[];
+
+  faces.forEach(function(f){
+    if(f.empty) return;
+
+    // --- Strategy A: backward-facing planar faces ---
+    if(f.kind==='planar'){
+      var dPull=dot(f.normal, pull);
+      // dPull < 0 means the face normal has a component pointing OPPOSITE to pull.
+      // Threshold: –sin(5°) ≈ –0.087 (5° past perpendicular).
+      if(dPull < -0.087){
+        // "Undercut angle" = how many degrees past 90° the face tilts backward
+        var ucAngle=Math.acos(Math.max(-1,Math.min(1,dPull)))*180/Math.PI - 90;
+        f._ucAngle=ucAngle;
+        if(ucAngle > 30) undercutCrit.push(f);
+        else             undercutWarn.push(f);
+      }
+    }
+
+    // --- Strategy B: perpendicular bores (side-core requirement) ---
+    if((f.kind==='cylindrical'||f.kind==='conical') && f.axis){
+      var axisPull=Math.abs(dot(f.axis, pull));
+      // axisPull = |cos(α)| where α = angle between bore axis and pull direction.
+      // < 0.5 means α > 60°, i.e. the axis is within 30° of being fully perpendicular to pull.
+      if(axisPull < 0.5) sidecoreList.push(f);
+    }
+  });
+
+  // Report critical undercuts (severely backward-facing)
+  if(undercutCrit.length){
+    var maxUcAngle=0;
+    undercutCrit.forEach(function(f){ if(f._ucAngle>maxUcAngle) maxUcAngle=f._ucAngle; });
+    items.push({
+      faces:undercutCrit.map(function(f){return f.index;}),
+      sev:'crit',
+      type:'Undercut — straight pull blocked ('+undercutCrit.length+' face(s))',
+      current:undercutCrit.length+' face(s) face backward by up to '+maxUcAngle.toFixed(1)+
+              '° past perpendicular to the '+pullName+' pull direction. '+
+              'The die cannot release these surfaces in a straight pull — they would lock the part in the cavity.',
+      recommended:'Options: (1) redesign the feature with positive draft or a chamfer so it no longer faces backward, '+
+                  '(2) reposition the parting line so the undercut geometry moves to the other die half, '+
+                  '(3) add side cores / lifters / collapsible cores (significant tooling cost and complexity).',
+      ref:RULES.refUndercut, metric:maxUcAngle
+    });
+  }
+
+  // Report mild / potential undercuts
+  if(undercutWarn.length){
+    items.push({
+      faces:undercutWarn.map(function(f){return f.index;}),
+      sev:'warn',
+      type:'Potential undercut — verify pull direction ('+undercutWarn.length+' face(s))',
+      current:undercutWarn.length+' face(s) are tilted 5–30° past perpendicular to the pull direction. '+
+              'These may be shallow undercuts, parting-line geometry, or negative-draft surfaces.',
+      recommended:'Verify that the chosen pull direction matches the actual die-opening axis. '+
+                  'If these faces form re-entrant geometry (e.g. a lip or groove), redesign with a positive draft angle. '+
+                  'If they sit on the parting surface, ensure adequate shut-off and flash control.',
+      ref:RULES.refUndercut, metric:0
+    });
+  }
+
+  // Report side-core requirements (perpendicular bores)
+  if(sidecoreList.length){
+    var minDia=Infinity;
+    sidecoreList.forEach(function(f){ var d=f.radiusMM*2; if(d<minDia) minDia=d; });
+    items.push({
+      faces:sidecoreList.map(function(f){return f.index;}),
+      sev:'warn',
+      type:'Side core / slide required — perpendicular bore(s) ('+sidecoreList.length+')',
+      current:sidecoreList.length+' cylindrical / conical feature(s) have axes perpendicular '+
+              '(within 30°) to the '+pullName+' pull direction. Smallest bore Ø ≈ '+minDia.toFixed(1)+' mm. '+
+              'These cannot be formed by the two main die halves.',
+      recommended:'Preferred solutions: (1) reorient the bore so its axis aligns with the pull direction, '+
+                  '(2) convert to a through-hole on the parting line (no side core needed), '+
+                  '(3) accept a side-core / slide mechanism and account for extra tooling cost, '+
+                  'wear, and flash risk at the side-core joint.',
+      ref:RULES.refHole, metric:minDia
+    });
+  }
+  // ---------- end undercut detection ----------
+
   var order={crit:0,warn:1,info:2};
   items.sort(function(a,b){return order[a.sev]-order[b.sev];});
   items.forEach(function(it,i){it.n=i+1;});
