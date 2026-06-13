@@ -252,7 +252,7 @@
       raycaster, triFace=null, faceInfo=null,
       mode='empty', pullFaceIdx=-1, pullVec=null, arrow=null,
       triScene=null, triCam=null, triRenderer=null, triReady=false,
-      _orbitQuat=null, _orbitDist=1;  // arcball state
+      _orbitQuat=null, _orbitDist=1, _orthoSize=1;  // arcball + ortho state
 
   // face colors:  green = OK,  red = critical concern,  yellow = minor / verify,
   //               *Active variants are brighter*,  blue = pull-direction face,
@@ -288,7 +288,7 @@
     renderer.setPixelRatio(window.devicePixelRatio||1);
     renderer.setClearColor(0x000000,0);   // transparent: viewport bg comes from #left CSS
     scene=new THREE.Scene();
-    camera=new THREE.PerspectiveCamera(45,1,0.01,100000);
+    camera=new THREE.OrthographicCamera(-1,1,1,-1,-1e5,1e5);
     // ---- Arcball (virtual trackball) — CAD-style rotation ----
     //
     // Orientation is stored as a single accumulated quaternion (_orbitQuat).
@@ -349,7 +349,8 @@
           // Camera right/up derived from the orbit quaternion — always correct frame.
           var rt=new THREE.Vector3(1,0,0).applyQuaternion(_orbitQuat);
           var up=new THREE.Vector3(0,1,0).applyQuaternion(_orbitQuat);
-          var pv=rt.multiplyScalar(-dx*_orbitDist*2).add(up.multiplyScalar(dy*_orbitDist*2));
+          // Pan speed proportional to frustum size so it always matches the pointer.
+          var pv=rt.multiplyScalar(-dx*_orthoSize*2).add(up.multiplyScalar(dy*_orthoSize*2));
           controls.target.add(pv);
           _syncCam();
           lx=e.clientX; ly=e.clientY;
@@ -360,11 +361,10 @@
 
       cv.addEventListener('wheel',function(e){
         e.preventDefault();
-        _orbitDist*=e.deltaY>0?1.12:1/1.12;
-        _orbitDist=Math.max(_orbitDist,1e-4);
-        _syncCam();
-        camera.near=_orbitDist/100; camera.far=_orbitDist*100;
-        camera.updateProjectionMatrix();
+        // Orthographic zoom = scale the frustum, not the camera distance.
+        _orthoSize*=e.deltaY>0?1.12:1/1.12;
+        _orthoSize=Math.max(_orthoSize,1e-4);
+        _syncCam();  // _syncCam updates frustum + calls updateProjectionMatrix
       },{passive:false});
 
       cv.addEventListener('contextmenu',function(e){e.preventDefault();});
@@ -382,7 +382,10 @@
   }
   function resize(){
     var l=$('left'); renderer.setSize(l.clientWidth,l.clientHeight,false);
-    camera.aspect=l.clientWidth/l.clientHeight; camera.updateProjectionMatrix();
+    var asp=l.clientWidth/l.clientHeight||1;
+    camera.left=-_orthoSize*asp; camera.right=_orthoSize*asp;
+    camera.top=_orthoSize;       camera.bottom=-_orthoSize;
+    camera.updateProjectionMatrix();
   }
 
   // ---- orientation triad (SolidWorks-style X/Y/Z gizmo, bottom-left) ----
@@ -464,26 +467,33 @@
     // Camera sits behind the target along its local +Z axis.
     var back=new THREE.Vector3(0,0,1).applyQuaternion(_orbitQuat);
     camera.position.copy(controls.target).addScaledVector(back,_orbitDist);
-    // Set orientation directly from the quaternion.
+    // Set orientation directly from the quaternion (no lookAt → no pole singularity).
     camera.quaternion.copy(_orbitQuat);
     // Keep camera.up consistent for code that reads it (e.g. the orientation triad).
     camera.up.set(0,1,0).applyQuaternion(_orbitQuat);
+    // Update orthographic frustum to the current zoom level and viewport aspect.
+    var l=$('left'), asp=l.clientWidth/l.clientHeight||1;
+    camera.left=-_orthoSize*asp; camera.right=_orthoSize*asp;
+    camera.top=_orthoSize;       camera.bottom=-_orthoSize;
+    camera.updateProjectionMatrix();
   }
 
   function fitCamera(){
     var s=geom.boundingSphere, c=s.center, r=s.radius||1;
     controls.target.copy(c);
-    _orbitDist=r*2.8;   // comfortable initial view distance
+    _orbitDist=r*5;     // camera sits far back — distance is irrelevant for ortho rendering
+                        // but kept large so near/far safely bracket the model from any angle
+    _orthoSize=r*1.5;   // frustum half-height: fits the model with a small margin
 
     // Compute the initial orbit quaternion so the camera sits at the classic
-    // front-right-elevated position (same as the original hard-coded offsets).
-    // Matrix4.lookAt(eye, target, up) builds the camera-to-world rotation matrix.
+    // front-right-elevated position. Matrix4.lookAt builds the camera-to-world matrix.
     var eye=new THREE.Vector3(c.x+r*1.6, c.y+r*1.1, c.z+r*2.0);
     var m4=new THREE.Matrix4().lookAt(eye, c, new THREE.Vector3(0,1,0));
     _orbitQuat.setFromRotationMatrix(m4);
 
     _syncCam();
-    camera.near=r/100; camera.far=r*100; camera.updateProjectionMatrix();
+    // Wide near/far for orthographic + 360° rotation — model stays visible from any angle.
+    camera.near=-r*100; camera.far=r*100; camera.updateProjectionMatrix();
   }
 
   // set vertex colors based on current mode
