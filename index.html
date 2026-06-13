@@ -288,8 +288,71 @@
     renderer.setClearColor(0x000000,0);   // transparent: viewport bg comes from #left CSS
     scene=new THREE.Scene();
     camera=new THREE.PerspectiveCamera(45,1,0.01,100000);
-    controls=new THREE.OrbitControls(camera,renderer.domElement);
-    controls.enableDamping=true; controls.dampingFactor=0.12;
+    // Quaternion trackball — replaces OrbitControls.
+    // Gives unrestricted 360° rotation in any direction with no polar limits or gimbal lock.
+    // Right-drag = pan, scroll = zoom (same feel as before).
+    controls={target:new THREE.Vector3(), update:function(){}};
+    (function(){
+      var cv=renderer.domElement, rot=false, pan=false, lx=0, ly=0;
+
+      // Map screen coords to a point on the virtual trackball sphere (unit vector).
+      // Points outside the sphere project onto the hyperbolic extension so edge-drags
+      // still feel natural (identical to Blender / Three.js TrackballControls).
+      function ball(x,y){
+        var r=cv.getBoundingClientRect();
+        var nx=2*(x-r.left)/r.width-1, ny=-(2*(y-r.top)/r.height-1);
+        var d2=nx*nx+ny*ny, R=0.8;
+        if(d2 <= R*R*0.5) return new THREE.Vector3(nx,ny,Math.sqrt(R*R-d2)).normalize();
+        return new THREE.Vector3(nx,ny,R*R*0.5/Math.sqrt(d2)).normalize();
+      }
+
+      cv.addEventListener('mousedown',function(e){
+        if(e.button===0){rot=true; lx=e.clientX; ly=e.clientY;}
+        if(e.button===2){pan=true; lx=e.clientX; ly=e.clientY;}
+      });
+
+      window.addEventListener('mousemove',function(e){
+        if(rot){
+          var p1=ball(lx,ly), p2=ball(e.clientX,e.clientY);
+          var ax=new THREE.Vector3().crossVectors(p1,p2);
+          if(ax.lengthSq()>1e-12){
+            ax.normalize();
+            var ang=Math.acos(Math.max(-1,Math.min(1,p1.dot(p2))));
+            var q=new THREE.Quaternion().setFromAxisAngle(ax, ang*1.5);
+            var off=camera.position.clone().sub(controls.target);
+            off.applyQuaternion(q);
+            camera.position.copy(controls.target).add(off);
+            camera.up.applyQuaternion(q);
+            camera.lookAt(controls.target);
+          }
+          lx=e.clientX; ly=e.clientY;
+        }
+        if(pan){
+          var r=cv.getBoundingClientRect();
+          var dx=(e.clientX-lx)/r.width, dy=(e.clientY-ly)/r.height;
+          var dist=camera.position.distanceTo(controls.target);
+          var right=new THREE.Vector3().setFromMatrixColumn(camera.matrix,0);
+          var up2=new THREE.Vector3().setFromMatrixColumn(camera.matrix,1);
+          var pv=right.multiplyScalar(-dx*dist*2).add(up2.multiplyScalar(dy*dist*2));
+          camera.position.add(pv); controls.target.add(pv);
+          lx=e.clientX; ly=e.clientY;
+        }
+      });
+
+      window.addEventListener('mouseup',function(){rot=false; pan=false;});
+
+      cv.addEventListener('wheel',function(e){
+        e.preventDefault();
+        var f=e.deltaY>0?1.12:1/1.12;
+        var off=camera.position.clone().sub(controls.target);
+        off.multiplyScalar(f);
+        camera.position.copy(controls.target).add(off);
+        camera.near=off.length()/100; camera.far=off.length()*100;
+        camera.updateProjectionMatrix();
+      },{passive:false});
+
+      cv.addEventListener('contextmenu',function(e){e.preventDefault();});
+    })();
     scene.add(new THREE.AmbientLight(0xffffff,0.55));
     var d1=new THREE.DirectionalLight(0xffffff,0.8); d1.position.set(1,1.5,1); scene.add(d1);
     var d2=new THREE.DirectionalLight(0xffffff,0.4); d2.position.set(-1,-0.5,-1); scene.add(d2);
@@ -381,6 +444,8 @@
     var s=geom.boundingSphere, c=s.center, r=s.radius||1;
     controls.target.copy(c);
     camera.position.set(c.x+r*1.6,c.y+r*1.1,c.z+r*2.0);
+    camera.up.set(0,1,0);          // reset up vector on each new file
+    camera.lookAt(c);              // explicitly face the model (trackball won't do this for us)
     camera.near=r/100; camera.far=r*100; camera.updateProjectionMatrix();
   }
 
