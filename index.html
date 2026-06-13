@@ -10,6 +10,11 @@
     --txt:#e6edf3; --mut:#90a0b2; --accent:#4a9eff;
     --ok:#3fb950; --warn:#d29922; --crit:#f85149; --info:#58a6ff; --pull:#4a9eff;
   }
+  body.light{
+    --bg:#f0f4f8; --panel:#ffffff; --panel2:#e8edf3; --line:#c8d3de;
+    --txt:#1a2535; --mut:#5a6d83; --accent:#1a7fe0;
+    --ok:#1a8a36; --warn:#9a6e00; --crit:#d92b22; --info:#1a7fe0; --pull:#1a7fe0;
+  }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
   body{background:var(--bg);color:var(--txt);
@@ -142,6 +147,7 @@
   <div class="stat"><span class="k">Warnings</span><span class="v warn" id="s-warn">—</span></div>
   <div class="stat"><span class="k">Items</span><span class="v" id="s-items">—</span></div>
   <div class="spacer"></div>
+  <button id="themebtn" title="Toggle light/dark mode">☀ Light</button>
   <button id="reload">Load file</button>
   <button id="autoaxis" style="display:none">Auto (longest axis)</button>
   <button id="analyse" class="primary" style="display:none">Analyse ▶</button>
@@ -627,6 +633,17 @@
       'Asset files missing. Keep <b>index.html</b> next to its <b>dfm-assets</b> folder.</div>';
     return;
   }
+  // ---- theme toggle ----
+  (function(){
+    var btn=$('themebtn');
+    var light=false;
+    btn.addEventListener('click',function(){
+      light=!light;
+      document.body.classList.toggle('light',light);
+      btn.textContent=light?'🌙 Dark':'☀ Light';
+    });
+  })();
+
   initScene(); wire(); setMode('empty');
 })();
 </script>
