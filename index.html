@@ -251,7 +251,8 @@
       active=-1, geom=null, mesh3=null, scene,camera,renderer,controls,
       raycaster, triFace=null, faceInfo=null,
       mode='empty', pullFaceIdx=-1, pullVec=null, arrow=null,
-      triScene=null, triCam=null, triRenderer=null, triReady=false;
+      triScene=null, triCam=null, triRenderer=null, triReady=false,
+      _orbitQuat=null, _orbitDist=1;  // arcball state
 
   // face colors:  green = OK,  red = critical concern,  yellow = minor / verify,
   //               *Active variants are brighter*,  blue = pull-direction face,
@@ -288,53 +289,68 @@
     renderer.setClearColor(0x000000,0);   // transparent: viewport bg comes from #left CSS
     scene=new THREE.Scene();
     camera=new THREE.PerspectiveCamera(45,1,0.01,100000);
-    // Quaternion trackball — replaces OrbitControls.
-    // Gives unrestricted 360° rotation in any direction with no polar limits or gimbal lock.
-    // Right-drag = pan, scroll = zoom (same feel as before).
+    // ---- Arcball (virtual trackball) — CAD-style rotation ----
+    //
+    // Orientation is stored as a single accumulated quaternion (_orbitQuat).
+    // Each frame the camera position is derived from that quaternion + _orbitDist.
+    // No camera.lookAt() is called after rotation, so there is no up-vector singularity
+    // or pole-flip regardless of how far the user rotates.
+    //
+    // Rotation direction: model follows the pointer ("hand" feel).
+    // Speed: matches Three.js TrackballControls default — full-width drag ≈ 60°.
+    //
+    // Controls:  left-drag = rotate   right-drag = pan   scroll = zoom
     controls={target:new THREE.Vector3(), update:function(){}};
+    _orbitQuat=new THREE.Quaternion();   // identity — set properly in fitCamera
     (function(){
       var cv=renderer.domElement, rot=false, pan=false, lx=0, ly=0;
+      var vS=new THREE.Vector3();  // arcball start point
 
-      // Map screen coords to a point on the virtual trackball sphere (unit vector).
-      // Points outside the sphere project onto the hyperbolic extension so edge-drags
-      // still feel natural (identical to Blender / Three.js TrackballControls).
-      function ball(x,y){
+      // Project screen (x,y) onto the virtual unit trackball sphere.
+      // Uses a [-0.5, 0.5] per-axis range (same as Three.js TrackballControls):
+      //   - a full-width horizontal drag ≈ 60° of rotation (natural CAD speed)
+      //   - with this range, ||(nx,ny)|| ≤ 0.707 < 1.0, so we are always on the sphere
+      //     (the flat-disc extension at len>1 can never be reached)
+      function proj(x,y){
         var r=cv.getBoundingClientRect();
-        var nx=2*(x-r.left)/r.width-1, ny=-(2*(y-r.top)/r.height-1);
-        var d2=nx*nx+ny*ny, R=0.8;
-        if(d2 <= R*R*0.5) return new THREE.Vector3(nx,ny,Math.sqrt(R*R-d2)).normalize();
-        return new THREE.Vector3(nx,ny,R*R*0.5/Math.sqrt(d2)).normalize();
+        var nx=(x-r.left)/r.width -0.5;    // [-0.5 … +0.5]
+        var ny=-((y-r.top)/r.height -0.5); // [-0.5 … +0.5], Y flipped
+        var len=Math.sqrt(nx*nx+ny*ny);
+        // Always on the sphere here; hyperbolic branch kept for safety.
+        if(len<1.0) return new THREE.Vector3(nx,ny,Math.sqrt(1.0-len*len));
+        var s=1.0/len; return new THREE.Vector3(nx*s,ny*s,0);
       }
 
       cv.addEventListener('mousedown',function(e){
-        if(e.button===0){rot=true; lx=e.clientX; ly=e.clientY;}
+        if(e.button===0){rot=true; lx=e.clientX; ly=e.clientY; vS.copy(proj(lx,ly));}
         if(e.button===2){pan=true; lx=e.clientX; ly=e.clientY;}
       });
 
       window.addEventListener('mousemove',function(e){
         if(rot){
-          var p1=ball(lx,ly), p2=ball(e.clientX,e.clientY);
-          var ax=new THREE.Vector3().crossVectors(p1,p2);
+          var vE=proj(e.clientX,e.clientY);
+          // cross(vEnd, vStart) — reversed order gives the "model follows hand" direction.
+          var ax=new THREE.Vector3().crossVectors(vE,vS);
           if(ax.lengthSq()>1e-12){
             ax.normalize();
-            var ang=Math.acos(Math.max(-1,Math.min(1,p1.dot(p2))));
-            var q=new THREE.Quaternion().setFromAxisAngle(ax, ang*1.5);
-            var off=camera.position.clone().sub(controls.target);
-            off.applyQuaternion(q);
-            camera.position.copy(controls.target).add(off);
-            camera.up.applyQuaternion(q);
-            camera.lookAt(controls.target);
+            var ang=Math.acos(Math.max(-1,Math.min(1,vS.dot(vE))));
+            // Post-multiply: apply rotation in the camera's current local frame so
+            // dragging always moves the model under the pointer, not around a fixed world axis.
+            _orbitQuat.multiply(new THREE.Quaternion().setFromAxisAngle(ax,ang));
+            _orbitQuat.normalize();   // prevent floating-point drift over many frames
+            _syncCam();
           }
-          lx=e.clientX; ly=e.clientY;
+          vS.copy(vE);  // rolling delta — update start for next mousemove
         }
         if(pan){
           var r=cv.getBoundingClientRect();
           var dx=(e.clientX-lx)/r.width, dy=(e.clientY-ly)/r.height;
-          var dist=camera.position.distanceTo(controls.target);
-          var right=new THREE.Vector3().setFromMatrixColumn(camera.matrix,0);
-          var up2=new THREE.Vector3().setFromMatrixColumn(camera.matrix,1);
-          var pv=right.multiplyScalar(-dx*dist*2).add(up2.multiplyScalar(dy*dist*2));
-          camera.position.add(pv); controls.target.add(pv);
+          // Camera right/up derived from the orbit quaternion — always correct frame.
+          var rt=new THREE.Vector3(1,0,0).applyQuaternion(_orbitQuat);
+          var up=new THREE.Vector3(0,1,0).applyQuaternion(_orbitQuat);
+          var pv=rt.multiplyScalar(-dx*_orbitDist*2).add(up.multiplyScalar(dy*_orbitDist*2));
+          controls.target.add(pv);
+          _syncCam();
           lx=e.clientX; ly=e.clientY;
         }
       });
@@ -343,11 +359,10 @@
 
       cv.addEventListener('wheel',function(e){
         e.preventDefault();
-        var f=e.deltaY>0?1.12:1/1.12;
-        var off=camera.position.clone().sub(controls.target);
-        off.multiplyScalar(f);
-        camera.position.copy(controls.target).add(off);
-        camera.near=off.length()/100; camera.far=off.length()*100;
+        _orbitDist*=e.deltaY>0?1.12:1/1.12;
+        _orbitDist=Math.max(_orbitDist,1e-4);
+        _syncCam();
+        camera.near=_orbitDist/100; camera.far=_orbitDist*100;
         camera.updateProjectionMatrix();
       },{passive:false});
 
@@ -440,12 +455,33 @@
     mesh3=new THREE.Mesh(geom,matr); scene.add(mesh3);
     fitCamera();
   }
+  // Reconstruct camera state from the stored orbit quaternion + distance.
+  // Called after every rotation, pan, zoom, and on model load.
+  // Never calls camera.lookAt() — the quaternion fully defines orientation,
+  // so there is no up-vector singularity at the poles.
+  function _syncCam(){
+    // Camera sits behind the target along its local +Z axis.
+    var back=new THREE.Vector3(0,0,1).applyQuaternion(_orbitQuat);
+    camera.position.copy(controls.target).addScaledVector(back,_orbitDist);
+    // Set orientation directly from the quaternion.
+    camera.quaternion.copy(_orbitQuat);
+    // Keep camera.up consistent for code that reads it (e.g. the orientation triad).
+    camera.up.set(0,1,0).applyQuaternion(_orbitQuat);
+  }
+
   function fitCamera(){
     var s=geom.boundingSphere, c=s.center, r=s.radius||1;
     controls.target.copy(c);
-    camera.position.set(c.x+r*1.6,c.y+r*1.1,c.z+r*2.0);
-    camera.up.set(0,1,0);          // reset up vector on each new file
-    camera.lookAt(c);              // explicitly face the model (trackball won't do this for us)
+    _orbitDist=r*2.8;   // comfortable initial view distance
+
+    // Compute the initial orbit quaternion so the camera sits at the classic
+    // front-right-elevated position (same as the original hard-coded offsets).
+    // Matrix4.lookAt(eye, target, up) builds the camera-to-world rotation matrix.
+    var eye=new THREE.Vector3(c.x+r*1.6, c.y+r*1.1, c.z+r*2.0);
+    var m4=new THREE.Matrix4().lookAt(eye, c, new THREE.Vector3(0,1,0));
+    _orbitQuat.setFromRotationMatrix(m4);
+
+    _syncCam();
     camera.near=r/100; camera.far=r*100; camera.updateProjectionMatrix();
   }
 
