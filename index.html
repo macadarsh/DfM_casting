@@ -251,7 +251,8 @@
       active=-1, geom=null, mesh3=null, scene,camera,renderer,controls,
       raycaster, triFace=null, faceInfo=null,
       mode='empty', pullFaceIdx=-1, pullVec=null, arrow=null,
-      triScene=null, triCam=null, triRenderer=null, triReady=false;
+      triScene=null, triCam=null, triRenderer=null, triReady=false,
+      orthoSize=1;
 
   // face colors:  green = OK,  red = critical concern,  yellow = minor / verify,
   //               *Active variants are brighter*,  blue = pull-direction face,
@@ -287,7 +288,7 @@
     renderer.setPixelRatio(window.devicePixelRatio||1);
     renderer.setClearColor(0x000000,0);   // transparent: viewport bg comes from #left CSS
     scene=new THREE.Scene();
-    camera=new THREE.PerspectiveCamera(45,1,0.01,100000);
+    camera=new THREE.OrthographicCamera(-1,1,1,-1,0.01,100000);
     controls=new THREE.OrbitControls(camera,renderer.domElement);
     controls.enableDamping=true; controls.dampingFactor=0.12;
     scene.add(new THREE.AmbientLight(0xffffff,0.55));
@@ -303,7 +304,10 @@
   }
   function resize(){
     var l=$('left'); renderer.setSize(l.clientWidth,l.clientHeight,false);
-    camera.aspect=l.clientWidth/l.clientHeight; camera.updateProjectionMatrix();
+    var aspect=l.clientWidth/l.clientHeight;
+    camera.left=-orthoSize*aspect; camera.right=orthoSize*aspect;
+    camera.top=orthoSize; camera.bottom=-orthoSize;
+    camera.updateProjectionMatrix();
   }
 
   // ---- orientation triad (SolidWorks-style X/Y/Z gizmo, bottom-left) ----
@@ -380,8 +384,17 @@
   function fitCamera(){
     var s=geom.boundingSphere, c=s.center, r=s.radius||1;
     controls.target.copy(c);
-    camera.position.set(c.x+r*1.6,c.y+r*1.1,c.z+r*2.0);
-    camera.near=r/100; camera.far=r*100; camera.updateProjectionMatrix();
+    // Isometric: camera along equal (1,1,1) diagonal
+    var d=r*4;
+    camera.position.set(c.x+d, c.y+d, c.z+d);
+    camera.up.set(0,1,0);
+    orthoSize=r*1.5;
+    var l=$('left'), aspect=l.clientWidth/l.clientHeight;
+    camera.left=-orthoSize*aspect; camera.right=orthoSize*aspect;
+    camera.top=orthoSize; camera.bottom=-orthoSize;
+    camera.near=r*0.01; camera.far=r*500;
+    camera.zoom=1;
+    camera.updateProjectionMatrix();
   }
 
   // set vertex colors based on current mode
