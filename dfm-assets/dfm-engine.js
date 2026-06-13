@@ -191,8 +191,44 @@ function buildItems(faces, pull, pullName){
   // Strategy B — perpendicular cylindrical / conical bores (side-core requirement)
   //   |dot(cylinderAxis, pullDir)| < 0.5  →  bore axis within 30° of being ⊥ to pull.
   //   These features cannot be formed by the two main die halves; a side core or slider is needed.
+  //
+  // Strategy C — lateral planar pocket walls (side-core requirement)
+  //   Planar faces whose normals are nearly perpendicular to pull (|dot| < 0.5) but which
+  //   are NOT already backward-facing (Strategy A) and which PASS the draft check (so they
+  //   show green). These are walls of internal slots, grooves, or lateral pockets that need
+  //   a side core even though their draft angle is technically acceptable.
+  //   We flag faces that are within 30° of perpendicular to pull AND are spatially inset
+  //   from the bounding-box extreme in the face's own outward-normal direction, which
+  //   indicates the face is recessed behind outer geometry rather than exposed on the surface.
 
-  var undercutCrit=[], undercutWarn=[], sidecoreList=[];
+  var undercutCrit=[], undercutWarn=[], sidecoreList=[], lateralPocketWalls=[];
+
+  // Pre-compute pull-direction extents for Strategy C centroid-depth test
+  var pullExtMin=Infinity, pullExtMax=-Infinity;
+  faces.forEach(function(f){
+    if(f.empty) return;
+    var h=dot(f.centroidMM, pull);
+    if(h<pullExtMin) pullExtMin=h;
+    if(h>pullExtMax) pullExtMax=h;
+  });
+  var pullSpan=(pullExtMax-pullExtMin)||1;
+
+  // Pre-compute per-normal-direction max extent for Strategy C depth test.
+  // We bucket normals into a coarse grid and track the furthest centroid seen in each direction.
+  // This lets us ask: "is this face's centroid behind other geometry in its own normal direction?"
+  function normalKey(n){
+    // Round to nearest 0.1 in each component → ~6° resolution
+    return [Math.round(n[0]*10),Math.round(n[1]*10),Math.round(n[2]*10)].join(',');
+  }
+  var normalMaxExtent={};
+  faces.forEach(function(f){
+    if(f.empty||f.kind!=='planar') return;
+    var absDPull=Math.abs(dot(f.normal,pull));
+    if(absDPull>=0.5) return; // not lateral enough
+    var k=normalKey(f.normal);
+    var extent=dot(f.centroidMM,f.normal);
+    if(!(k in normalMaxExtent)||extent>normalMaxExtent[k]) normalMaxExtent[k]=extent;
+  });
 
   faces.forEach(function(f){
     if(f.empty) return;
@@ -208,6 +244,37 @@ function buildItems(faces, pull, pullName){
         f._ucAngle=ucAngle;
         if(ucAngle > 30) undercutCrit.push(f);
         else             undercutWarn.push(f);
+        return; // Strategy A takes priority; skip C check below
+      }
+
+      // --- Strategy C: lateral planar pocket walls ---
+      var absDPull=Math.abs(dPull);
+      if(absDPull < 0.5){  // normal within 30° of being ⊥ to pull → lateral face
+        // Skip faces already caught by the draft check (they show as red/yellow anyway)
+        var angNP=Math.acos(Math.min(1,absDPull))*180/Math.PI; // ~90° for pure laterals
+        var draft=Math.abs(angNP-90);
+        if(draft < RULES.draftInsideDeg-1e-6) return; // draft check already handles this face
+
+        // Depth test: is this face recessed behind other faces in the same outward-normal direction?
+        // If the face's normal-direction extent is significantly below the maximum for similar normals,
+        // it is hidden behind outer geometry → it walls off an internal pocket → side core needed.
+        var k=normalKey(f.normal);
+        var maxExt=(normalMaxExtent[k]!==undefined)?normalMaxExtent[k]:dot(f.centroidMM,f.normal);
+        var myExt=dot(f.centroidMM,f.normal);
+        var depthBehind=maxExt-myExt; // >0 means there is geometry further out in this direction
+
+        // Also check pull-direction position: reject faces at the very top/bottom of the part
+        // (those are likely parting-surface geometry, not enclosed pockets).
+        var pullH=dot(f.centroidMM,pull);
+        var relH=(pullH-pullExtMin)/pullSpan;
+        var atExtreme=(relH<0.05||relH>0.95);
+
+        // Flag if the face is inset (depth > 1 mm behind outermost geometry in its normal direction)
+        // OR if it sits in the middle of the part's pull-direction span (not on a parting surface).
+        // Both signals together give higher confidence; either alone is a warning worth showing.
+        if(depthBehind > 1.0 || (!atExtreme && depthBehind > 0.1)){
+          lateralPocketWalls.push(f);
+        }
       }
     }
 
@@ -269,6 +336,25 @@ function buildItems(faces, pull, pullName){
                   '(3) accept a side-core / slide mechanism and account for extra tooling cost, '+
                   'wear, and flash risk at the side-core joint.',
       ref:RULES.refHole, metric:minDia
+    });
+  }
+
+  // Report lateral pocket walls (Strategy C)
+  if(lateralPocketWalls.length){
+    items.push({
+      faces:lateralPocketWalls.map(function(f){return f.index;}),
+      sev:'crit',
+      type:'Side core required — lateral pocket / slot walls ('+lateralPocketWalls.length+' face(s))',
+      current:lateralPocketWalls.length+' planar face(s) face laterally (normal within 30° of '+
+              'perpendicular to the '+pullName+' pull direction) and are recessed behind outer '+
+              'geometry — a clear sign they wall off an internal slot, groove, or pocket. '+
+              'These surfaces cannot be formed or released by a straight pull in the '+pullName+' direction.',
+      recommended:'Options: (1) add a side core, lifter, or slide to form and release the pocket; '+
+                  '(2) redesign the slot/groove to open in the pull direction (eliminate the enclosed pocket); '+
+                  '(3) split the feature to the parting line so each die half contributes one wall; '+
+                  '(4) convert to a post-cast machined feature if production volume allows. '+
+                  'Side-core mechanisms add tooling cost, maintenance, and flash risk at the shut-off joint.',
+      ref:RULES.refUndercut, metric:0
     });
   }
   // ---------- end undercut detection ----------
