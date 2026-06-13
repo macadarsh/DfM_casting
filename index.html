@@ -36,6 +36,18 @@
   button:hover,select:hover{border-color:var(--accent)}
   button.primary{background:var(--accent);border-color:var(--accent);color:#06121f;font-weight:650}
 
+  /* viewport background control */
+  #bgctl{display:none;align-items:center;gap:6px}
+  #bgctl .lbl2{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px}
+  .bgsw{width:22px;height:22px;padding:0;border-radius:6px;border:1px solid var(--line);cursor:pointer}
+  .bgsw:hover{border-color:var(--accent)}
+  .bgsw.active{border-color:var(--accent);box-shadow:0 0 0 2px rgba(74,158,255,.45)}
+  #bgcolor{width:26px;height:26px;padding:0;border:1px solid var(--line);border-radius:6px;
+    background:var(--panel2);cursor:pointer}
+  #bgcolor::-webkit-color-swatch-wrapper{padding:2px}
+  #bgcolor::-webkit-color-swatch{border:none;border-radius:4px}
+  #bgcolor::-moz-color-swatch{border:none;border-radius:4px}
+
   /* ---------- step guide strip ---------- */
   #steps{flex:none;display:flex;align-items:center;gap:6px;padding:8px 18px;
     background:var(--panel);border-bottom:1px solid var(--line);font-size:12px;flex-wrap:wrap}
@@ -148,6 +160,16 @@
   <div class="stat"><span class="k">Items</span><span class="v" id="s-items">—</span></div>
   <div class="spacer"></div>
   <button id="themebtn" title="Toggle light/dark mode">☀ Light</button>
+  <div id="bgctl" title="Background color of the 3D viewport">
+    <span class="lbl2">Viewport</span>
+    <button class="bgsw" data-bg="radial-gradient(120% 120% at 50% 20%,#19222d 0%,#0c1015 100%)" style="background:radial-gradient(120% 120% at 50% 20%,#19222d 0%,#0c1015 100%)" title="Dark gradient (default)"></button>
+    <button class="bgsw" data-bg="#11161c" style="background:#11161c" title="Dark"></button>
+    <button class="bgsw" data-bg="#3b4654" style="background:#3b4654" title="Slate gray"></button>
+    <button class="bgsw" data-bg="radial-gradient(120% 120% at 50% 25%,#eaf2fc 0%,#9fb9d8 100%)" style="background:radial-gradient(120% 120% at 50% 25%,#eaf2fc 0%,#9fb9d8 100%)" title="Blue gradient (CAD)"></button>
+    <button class="bgsw" data-bg="#dfe6ee" style="background:#dfe6ee" title="Light gray"></button>
+    <button class="bgsw" data-bg="#ffffff" style="background:#ffffff" title="White"></button>
+    <input type="color" id="bgcolor" value="#0c1015" title="Custom viewport color">
+  </div>
   <button id="reload">Load file</button>
   <button id="autoaxis" style="display:none">Auto (longest axis)</button>
   <button id="analyse" class="primary" style="display:none">Analyse ▶</button>
@@ -261,8 +283,9 @@
   // ---- three.js scene ----
   function initScene(){
     var cv=$('canvas');
-    renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+    renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
     renderer.setPixelRatio(window.devicePixelRatio||1);
+    renderer.setClearColor(0x000000,0);   // transparent: viewport bg comes from #left CSS
     scene=new THREE.Scene();
     camera=new THREE.PerspectiveCamera(45,1,0.01,100000);
     controls=new THREE.OrbitControls(camera,renderer.domElement);
@@ -530,6 +553,7 @@
       ch.classList.toggle('cur',n===step);
     });
     $('reload').style.display='inline-block';
+    $('bgctl').style.display=(m==='empty')?'none':'flex';   // viewport bg picker once a model is loaded
     $('autoaxis').style.display  =(m==='pick')?'inline-block':'none';
     $('analyse').style.display   =(m==='ready')?'inline-block':'none';
     $('changepull').style.display=(m==='results')?'inline-block':'none';
@@ -642,6 +666,26 @@
       document.body.classList.toggle('light',light);
       btn.textContent=light?'🌙 Dark':'☀ Light';
     });
+  })();
+
+  // ---- viewport background control ----
+  (function(){
+    var left=$('left'), inp=$('bgcolor'),
+        sws=Array.prototype.slice.call(document.querySelectorAll('.bgsw'));
+    var DEFAULT='radial-gradient(120% 120% at 50% 20%,#19222d 0%,#0c1015 100%)';
+    function markActive(val){
+      sws.forEach(function(b){b.classList.toggle('active',b.dataset.bg===val);});
+    }
+    function apply(val,fromInput){
+      left.style.background=val;          // canvas is transparent, so this is the viewport bg
+      markActive(val);
+      if(!fromInput && /^#([0-9a-f]{6})$/i.test(val)) inp.value=val;
+      try{localStorage.setItem('dfmViewportBg',val);}catch(e){}
+    }
+    sws.forEach(function(b){b.addEventListener('click',function(){apply(b.dataset.bg,false);});});
+    inp.addEventListener('input',function(){apply(inp.value,true);});
+    var saved=null; try{saved=localStorage.getItem('dfmViewportBg');}catch(e){}
+    apply(saved||DEFAULT,false);
   })();
 
   initScene(); wire(); setMode('empty');
