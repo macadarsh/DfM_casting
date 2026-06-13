@@ -336,7 +336,8 @@
             var ang=Math.acos(Math.max(-1,Math.min(1,vS.dot(vE))));
             // Post-multiply: apply rotation in the camera's current local frame so
             // dragging always moves the model under the pointer, not around a fixed world axis.
-            _orbitQuat.multiply(new THREE.Quaternion().setFromAxisAngle(ax,ang));
+            // Speed factor 2.5 → full-width drag ≈ 150° (typical CAD feel).
+            _orbitQuat.multiply(new THREE.Quaternion().setFromAxisAngle(ax,ang*2.5));
             _orbitQuat.normalize();   // prevent floating-point drift over many frames
             _syncCam();
           }
