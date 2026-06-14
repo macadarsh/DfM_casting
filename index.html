@@ -200,9 +200,14 @@
   #wtlegend .wt-title{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);margin-bottom:2px}
   #wtlegend .wt-row{display:flex;align-items:center;gap:6px}
   #wtlegend i{width:9px;height:9px;border-radius:2px;flex:none}
-  button#wallcheck{background:var(--panel2);border:1px solid var(--line);color:var(--fg)}
+  button#wallcheck{background:var(--panel2);border:1px solid var(--line);color:var(--fg);transition:box-shadow .2s,border-color .2s,color .2s,background .2s}
   button#wallcheck:hover{border-color:var(--accent);color:var(--accent)}
-  button#showdfm{background:var(--panel2);border:1px solid var(--line);color:var(--fg)}
+  button#wallcheck.wt-active{
+    background:rgba(74,158,255,.14);
+    border-color:var(--accent);
+    color:var(--accent);
+    box-shadow:0 0 0 2px rgba(74,158,255,.25), 0 0 12px 3px rgba(74,158,255,.30);
+  }
 </style>
 </head>
 <body>
@@ -234,8 +239,7 @@
   <button id="analyse" class="primary" style="display:none">Analyse ▶</button>
   <button id="changepull" style="display:none">Change pull face</button>
   <button id="flippull" style="display:none">⇅ Flip direction</button>
-  <button id="wallcheck" style="display:none" title="Measure wall thickness across all faces and flag thin walls / abrupt changes (NADCA P-4A-3-15)">⊡ Wall Thickness</button>
-  <button id="showdfm"  style="display:none" title="Return to DfM analysis view">← DfM Analysis</button>
+  <button id="wallcheck" style="display:none" title="Toggle wall thickness heatmap — flags thin walls and abrupt changes (NADCA P-4A-3-15)">⊡ Wall Thickness</button>
 </div>
 
 <!-- ============ STEP GUIDE ============ -->
@@ -335,7 +339,7 @@
       _orbitQuat=null, _orbitDist=1, _orthoSize=1,  // arcball + ortho state
       _panDist=0,                                    // pixel distance of last right-drag (used to distinguish click vs drag)
       _pickedFace=-1;                                // face idx shown in face-info tooltip
-  var wallThkData=null, wallActiveIdx=-1;            // wall thickness analysis results + selected item
+  var wallThkData=null, wallActiveIdx=-1, prevMode='empty'; // wall thickness analysis results + mode to restore on toggle-off
 
   // face colors:  green = OK,  red = critical concern,  yellow = minor / verify,
   //               *Active variants are brighter*,  blue = pull-direction face,
@@ -954,10 +958,34 @@
     paintWallHeatmap();
   }
 
-  // Entry point: raycasts all faces inward, then calls the engine analysis
+  // Toggle wall thickness heatmap on/off.
+  // First press: raycasts all faces and enters 'wt' mode (result cached for future presses).
+  // Subsequent presses while in 'wt': returns to the mode that was active before.
   function runWallCheck(){
     if(!mesh3||!faceInfo) return;
+
+    // ── TOGGLE OFF ──────────────────────────────────────────────────────────
+    if(mode==='wt'){
+      hideFaceInfo();
+      var ret=prevMode==='results'&&analysis ? 'results' :
+              prevMode==='ready'&&pullVec    ? 'ready'   : 'pick';
+      setMode(ret);
+      if(ret==='results'){ buildList(); if(analysis.items.length) select(active>=0?active:0); else showEmpty(); }
+      paint();
+      return;
+    }
+
+    // ── TOGGLE ON ───────────────────────────────────────────────────────────
+    prevMode=mode;   // remember where we came from
     hideFaceInfo();
+
+    // Use cached results if already computed (avoids re-raycasting on every press)
+    if(wallThkData){
+      setMode('wt');
+      buildWallPanel();
+      return;
+    }
+
     $('loading').classList.add('show');
     $('loadtxt').textContent='Measuring wall thickness…';
     setTimeout(function(){
@@ -965,22 +993,16 @@
         var wtRC=new THREE.Raycaster();
         var nFaces=faceInfo.length;
         var faceThkMM=new Array(nFaces).fill(-1);
-        // Minimum skip distance — skip self-intersections (< 0.5mm is always self-hit)
-        var SKIP=0.5;
+        var SKIP=0.5; // skip self-intersections within 0.5 mm
 
         faceInfo.forEach(function(f){
           if(f.empty||!f.normal) return;
-          // Origin: face centroid (already in mm — OCC normalizes to mm)
           var ori=new THREE.Vector3(f.centroidMM[0],f.centroidMM[1],f.centroidMM[2]);
-          // Direction: inward = −normal
           var dir=new THREE.Vector3(-f.normal[0],-f.normal[1],-f.normal[2]);
           wtRC.set(ori,dir);
           var hits=wtRC.intersectObject(mesh3);
           for(var k=0;k<hits.length;k++){
-            if(hits[k].distance > SKIP){
-              faceThkMM[f.index]=hits[k].distance;
-              break;
-            }
+            if(hits[k].distance > SKIP){ faceThkMM[f.index]=hits[k].distance; break; }
           }
         });
 
@@ -1012,7 +1034,7 @@
     $('changepull').style.display=(m==='results')?'inline-block':'none';
     $('flippull').style.display  =(m==='ready'||m==='results')?'inline-block':'none';
     $('wallcheck').style.display =(m==='ready'||m==='results'||m==='wt')?'inline-block':'none';
-    $('showdfm').style.display   =(isWt&&analysis)?'inline-block':'none';
+    $('wallcheck').classList.toggle('wt-active', isWt);
     $('pickhint').classList.toggle('show', m==='pick');
     $('wtlegend').classList.toggle('show', isWt);
     if(isWt){ paintWallHeatmap(); return; }  // panel filled by buildWallPanel()
@@ -1124,12 +1146,6 @@
       if(e.key==='ArrowLeft')select((active-1+analysis.items.length)%analysis.items.length);
     });
     $('wallcheck').addEventListener('click', runWallCheck);
-    $('showdfm').addEventListener('click', function(){
-      if(analysis){ setMode('results'); buildList();
-        if(analysis.items.length) select(active>=0?active:0); else showEmpty();
-        paint();
-      } else { setMode(pullVec?'ready':'pick'); paint(); }
-    });
     // ---- context menu: View Normal to Face ----
     $('ctx-viewnormal').addEventListener('click',function(){
       var fi=this._faceIdx;
