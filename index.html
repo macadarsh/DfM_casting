@@ -187,6 +187,22 @@
   .fi-crit{color:#f24338;font-weight:700;font-size:12px}
   .fi-warn{color:#e6c43a;font-weight:700;font-size:12px}
   .fi-desc{color:var(--mut);font-size:11px;margin-top:3px;line-height:1.45}
+
+  /* ---------- wall thickness heatmap legend ---------- */
+  #wtlegend{
+    position:absolute;bottom:44px;left:10px;z-index:4;
+    display:none;flex-direction:column;gap:4px;
+    background:rgba(12,16,21,.78);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:8px;padding:8px 11px;
+    font-size:11px;
+  }
+  #wtlegend.show{display:flex}
+  #wtlegend .wt-title{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);margin-bottom:2px}
+  #wtlegend .wt-row{display:flex;align-items:center;gap:6px}
+  #wtlegend i{width:9px;height:9px;border-radius:2px;flex:none}
+  button#wallcheck{background:var(--panel2);border:1px solid var(--line);color:var(--fg)}
+  button#wallcheck:hover{border-color:var(--accent);color:var(--accent)}
+  button#showdfm{background:var(--panel2);border:1px solid var(--line);color:var(--fg)}
 </style>
 </head>
 <body>
@@ -218,6 +234,8 @@
   <button id="analyse" class="primary" style="display:none">Analyse ▶</button>
   <button id="changepull" style="display:none">Change pull face</button>
   <button id="flippull" style="display:none">⇅ Flip direction</button>
+  <button id="wallcheck" style="display:none" title="Measure wall thickness across all faces and flag thin walls / abrupt changes (NADCA P-4A-3-15)">⊡ Wall Thickness</button>
+  <button id="showdfm"  style="display:none" title="Return to DfM analysis view">← DfM Analysis</button>
 </div>
 
 <!-- ============ STEP GUIDE ============ -->
@@ -242,6 +260,15 @@
       <div><i style="background:#4a9eff"></i>Pull-direction face</div>
       <div><i style="background:#3fb950"></i>OK surface</div>
     </div>
+    <!-- wall thickness heatmap legend (shown only in wt mode) -->
+    <div id="wtlegend">
+      <div class="wt-title">Wall Thickness</div>
+      <div class="wt-row"><i style="background:#3fb950"></i><span>OK — ≥ 1.2 mm</span></div>
+      <div class="wt-row"><i style="background:#e6c43a"></i><span>Thin — 0.8–1.2 mm</span></div>
+      <div class="wt-row"><i style="background:#f24338"></i><span>Critical — &lt; 0.8 mm</span></div>
+      <div class="wt-row"><i style="background:#606878"></i><span>No data</span></div>
+    </div>
+
     <div class="vhint">drag = rotate · scroll = zoom · right-drag = pan · right-click flat face = view options</div>
     <div id="pickhint">Click the face that is normal to the pull / ejection direction</div>
     <div id="navbar" style="display:none">
@@ -308,6 +335,7 @@
       _orbitQuat=null, _orbitDist=1, _orthoSize=1,  // arcball + ortho state
       _panDist=0,                                    // pixel distance of last right-drag (used to distinguish click vs drag)
       _pickedFace=-1;                                // face idx shown in face-info tooltip
+  var wallThkData=null, wallActiveIdx=-1;            // wall thickness analysis results + selected item
 
   // face colors:  green = OK,  red = critical concern,  yellow = minor / verify,
   //               *Active variants are brighter*,  blue = pull-direction face,
@@ -607,8 +635,9 @@
     _syncCam();
   }
 
-  // set vertex colors based on current mode
+  // set vertex colors based on current mode  (delegates to heatmap in wt mode)
   function paint(){
+    if(mode==='wt'){ paintWallHeatmap(); return; }
     if(!geom) return;
     var col=geom.attributes.color.array, nTri=triFace.length;
     var faceSev={}, activeSet={};   // faceSev: 3=crit(red) 2/1=warn/info(yellow)
@@ -672,11 +701,22 @@
       });
     }
     // --- Build HTML ---
+    // Wall thickness row (shown in wt mode)
+    var thkRow='';
+    if(mode==='wt'&&wallThkData&&wallThkData.faceThkMM){
+      var tv=wallThkData.faceThkMM[fi];
+      var R2=window.DfMEngine.RULES;
+      var thkLabel=tv>=0?tv.toFixed(2)+' mm':'—';
+      var thkColor=tv<0?'inherit':tv<R2.minWallAchievMM?'#f24338':tv<R2.minWallDesignMM?'#e6c43a':'#3fb950';
+      thkRow='<div class="fi-row"><span class="fi-label">Wall thickness</span>'+
+             '<span class="fi-val" style="color:'+thkColor+'">'+thkLabel+'</span></div>';
+    }
     var tip=$('face-tip');
     tip.innerHTML=
       '<div class="fi-head"><span class="fi-face">Face&nbsp;'+fi+'</span>'+
         '<span class="fi-kind">'+kindLabel+'</span></div>'+
       '<div class="fi-row"><span class="fi-label">Area</span><span class="fi-val">'+areaText+'</span></div>'+
+      thkRow+
       '<div class="fi-row"><span class="fi-label">Draft angle</span><span class="fi-val">'+draftText+'</span></div>'+
       '<hr class="fi-sep">'+statusHtml;
     // --- Position: near click, clamped ---
@@ -714,8 +754,14 @@
       for(var i=0;i<analysis.items.length;i++){
         if(analysis.items[i].faces.indexOf(face)>=0){ select(i); return; }
       }
-      // Green (OK) face clicked — deselect current highlight but keep tooltip
       active=-1; paint();
+    }
+    if(mode==='wt' && wallThkData){
+      showFaceInfo(face, ev.clientX, ev.clientY);
+      for(var wi=0;wi<wallThkData.items.length;wi++){
+        if(wallThkData.items[wi].faces.indexOf(face)>=0){ wallSelect(wi); return; }
+      }
+      wallActiveIdx=-1; paintWallHeatmap();
     }
   }
 
@@ -834,6 +880,119 @@
   function esc(s){return String(s).replace(/[&<>]/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
 
+  // ---- Wall Thickness Analysis ----
+
+  // Color model faces by measured wall thickness (3-tier: red / yellow / green / grey)
+  function paintWallHeatmap(){
+    if(!geom||!wallThkData) return;
+    var col=geom.attributes.color.array, nTri=triFace.length;
+    var R=window.DfMEngine.RULES;
+    var hiSet={};
+    if(wallActiveIdx>=0&&wallThkData.items[wallActiveIdx]){
+      wallThkData.items[wallActiveIdx].faces.forEach(function(f){hiSet[f]=1;});
+    }
+    var thk=wallThkData.faceThkMM;
+    for(var t=0;t<nTri;t++){
+      var fi=triFace[t], c, hi=hiSet[fi];
+      var tv=thk[fi];
+      if(tv===undefined||tv<0)           c=COL.neutral;
+      else if(tv < R.minWallAchievMM)    c=hi?COL.critActive:COL.crit;
+      else if(tv < R.minWallDesignMM)    c=hi?COL.warnActive:COL.warn;
+      else                               c=hi?[0.30,0.85,0.38]:COL.ok;
+      for(var k=0;k<3;k++){var o=t*9+k*3; col[o]=c[0];col[o+1]=c[1];col[o+2]=c[2];}
+    }
+    geom.attributes.color.needsUpdate=true;
+  }
+
+  // Populate right panel with wall thickness results
+  function buildWallPanel(){
+    if(!wallThkData) return;
+    var wd=wallThkData;
+    $('r-list').innerHTML='';
+    wd.items.forEach(function(it,i){
+      var div=document.createElement('div'); div.className='it'; div.dataset.wi=i;
+      div.innerHTML='<span class="num '+it.sev+'">'+it.n+'</span>'+
+        '<span class="tt">'+it.type+'</span>'+
+        '<span class="mm">'+(it.metric>0?it.metric.toFixed(2)+' mm':'')+'</span>';
+      div.addEventListener('click',function(){wallSelect(+this.dataset.wi);});
+      $('r-list').appendChild(div);
+    });
+    $('navbar').style.display=wd.items.length?'flex':'none';
+    if(wd.items.length) wallSelect(0); else {
+      // No items beyond summary
+      $('r-badge').className='badge ok'; $('r-badge').textContent='Wall OK';
+      $('r-title').textContent='No wall thickness concerns';
+      $('r-sub').textContent='Min '+wd.minThk.toFixed(2)+' mm · Avg '+wd.avgThk.toFixed(2)+' mm · Max '+wd.maxThk.toFixed(2)+' mm';
+      $('r-body').innerHTML='<p class="muted">All measured wall sections meet the NADCA P-4A-3-15 design minimum ('+
+        window.DfMEngine.RULES.minWallDesignMM.toFixed(1)+' mm) and no abrupt thickness changes were detected.</p>';
+    }
+  }
+
+  // Select / highlight a wall thickness item
+  function wallSelect(i){
+    if(!wallThkData||i<0||i>=wallThkData.items.length) return;
+    wallActiveIdx=i; hideFaceInfo();
+    var it=wallThkData.items[i];
+    $('pos').textContent=(i+1)+' / '+wallThkData.items.length;
+    var sevName={crit:'Critical',warn:'Warning',info:'Info',ok:'OK'}[it.sev]||it.sev;
+    $('r-badge').className='badge '+it.sev; $('r-badge').textContent='Wall #'+it.n+' · '+sevName;
+    $('r-title').textContent=it.type;
+    $('r-sub').textContent=it.faces.length?'Highlighted on model ('+it.faces.length+' face(s)).':'Overall summary.';
+    var refLink=analysis ?
+      '<a href="'+analysis.PDF+'#page='+it.ref.page+'" target="_blank" rel="noopener">📄 '+esc(it.ref.clause)+' · open p.'+it.ref.page+'</a>' :
+      '<span style="font-size:12px;color:var(--mut)">'+esc(it.ref.clause)+'</span>';
+    $('r-body').innerHTML=
+      '<div class="field cur"><div class="lbl"><i style="background:var(--crit)"></i>Current in your model</div>'+
+        '<div class="box">'+esc(it.current)+'</div></div>'+
+      '<div class="field rec"><div class="lbl"><i style="background:var(--ok)"></i>NADCA recommendation</div>'+
+        '<div class="box">'+esc(it.recommended)+'</div></div>'+
+      '<div class="clause"><span class="cn">Reference:</span>'+refLink+'</div>'+
+      '<p class="muted" style="font-size:11px;margin-top:14px">Wall thickness is measured by casting a ray inward from each face centroid. Values are approximate from tessellated geometry — verify against the solid model.</p>';
+    Array.prototype.forEach.call($('r-list').children,function(c){
+      c.classList.toggle('active',+c.dataset.wi===i);});
+    var act=$('r-list').children[i]; if(act) act.scrollIntoView({block:'nearest'});
+    paintWallHeatmap();
+  }
+
+  // Entry point: raycasts all faces inward, then calls the engine analysis
+  function runWallCheck(){
+    if(!mesh3||!faceInfo) return;
+    hideFaceInfo();
+    $('loading').classList.add('show');
+    $('loadtxt').textContent='Measuring wall thickness…';
+    setTimeout(function(){
+      try{
+        var wtRC=new THREE.Raycaster();
+        var nFaces=faceInfo.length;
+        var faceThkMM=new Array(nFaces).fill(-1);
+        // Minimum skip distance — skip self-intersections (< 0.5mm is always self-hit)
+        var SKIP=0.5;
+
+        faceInfo.forEach(function(f){
+          if(f.empty||!f.normal) return;
+          // Origin: face centroid (already in mm — OCC normalizes to mm)
+          var ori=new THREE.Vector3(f.centroidMM[0],f.centroidMM[1],f.centroidMM[2]);
+          // Direction: inward = −normal
+          var dir=new THREE.Vector3(-f.normal[0],-f.normal[1],-f.normal[2]);
+          wtRC.set(ori,dir);
+          var hits=wtRC.intersectObject(mesh3);
+          for(var k=0;k<hits.length;k++){
+            if(hits[k].distance > SKIP){
+              faceThkMM[f.index]=hits[k].distance;
+              break;
+            }
+          }
+        });
+
+        wallThkData=window.DfMEngine.analyzeWallThickness(faceThkMM,faceInfo);
+        wallActiveIdx=-1;
+        setMode('wt');
+        buildWallPanel();
+      } catch(e){ alert('Wall thickness check failed: '+e.message); }
+      $('loading').classList.remove('show');
+    },30);
+  }
+
   // ---- step / mode controller (guides the user) ----
   function setMode(m){
     hideFaceInfo();
@@ -844,14 +1003,20 @@
       ch.classList.toggle('done',n<step);
       ch.classList.toggle('cur',n===step);
     });
+    var hasModel=(m!=='empty');
+    var isWt=(m==='wt');
     $('reload').style.display='inline-block';
-    $('bgctl').style.display=(m==='empty')?'none':'flex';   // viewport bg picker once a model is loaded
+    $('bgctl').style.display=hasModel?'flex':'none';
     $('autoaxis').style.display  =(m==='pick')?'inline-block':'none';
     $('analyse').style.display   =(m==='ready')?'inline-block':'none';
     $('changepull').style.display=(m==='results')?'inline-block':'none';
     $('flippull').style.display  =(m==='ready'||m==='results')?'inline-block':'none';
+    $('wallcheck').style.display =(m==='ready'||m==='results'||m==='wt')?'inline-block':'none';
+    $('showdfm').style.display   =(isWt&&analysis)?'inline-block':'none';
     $('pickhint').classList.toggle('show', m==='pick');
-    if(m==='results') return; // panel filled by select()/showEmpty()
+    $('wtlegend').classList.toggle('show', isWt);
+    if(isWt){ paintWallHeatmap(); return; }  // panel filled by buildWallPanel()
+    if(m==='results') return;                // panel filled by select()/showEmpty()
     $('r-list').innerHTML='';
     $('navbar').style.display='none';
     if(m==='empty'){
@@ -872,12 +1037,14 @@
       $('r-title').textContent='Run the manufacturability check';
       $('r-sub').textContent='Pull direction is set — shown by the blue arrow.';
       $('r-body').innerHTML='<p class="muted">Click <b>Analyse</b> to evaluate draft, sharp internal radii and cored '+
-        'holes against NADCA aluminum guidelines. To change the direction, click another face.</p>';
+        'holes against NADCA aluminum guidelines. To change the direction, click another face.<br><br>'+
+        'You can also click <b>⊡ Wall Thickness</b> to measure wall thickness independently of the pull direction.</p>';
     }
   }
 
   function resetForNewFile(){
     analysis=null; active=-1; pullFaceIdx=-1; pullVec=null; faceInfo=null;
+    wallThkData=null; wallActiveIdx=-1;
     if(arrow){scene.remove(arrow);arrow=null;}
     ['s-file','s-unit','s-env','s-faces','s-crit','s-warn','s-items'].forEach(function(id){$(id).textContent='—';});
   }
@@ -934,12 +1101,34 @@
     $('changepull').addEventListener('click',function(){
       analysis=null; active=-1; setMode('pick'); paint();});
     $('flippull').addEventListener('click',flipPullVec);
-    $('next').addEventListener('click',function(){if(analysis&&analysis.items.length)select((active+1)%analysis.items.length);});
-    $('prev').addEventListener('click',function(){if(analysis&&analysis.items.length)select((active-1+analysis.items.length)%analysis.items.length);});
+    $('next').addEventListener('click',function(){
+      if(mode==='wt'&&wallThkData&&wallThkData.items.length)
+        wallSelect((wallActiveIdx+1)%wallThkData.items.length);
+      else if(analysis&&analysis.items.length)
+        select((active+1)%analysis.items.length);
+    });
+    $('prev').addEventListener('click',function(){
+      if(mode==='wt'&&wallThkData&&wallThkData.items.length)
+        wallSelect((wallActiveIdx-1+wallThkData.items.length)%wallThkData.items.length);
+      else if(analysis&&analysis.items.length)
+        select((active-1+analysis.items.length)%analysis.items.length);
+    });
     document.addEventListener('keydown',function(e){
+      if(mode==='wt'&&wallThkData&&wallThkData.items.length){
+        if(e.key==='ArrowRight') wallSelect((wallActiveIdx+1)%wallThkData.items.length);
+        if(e.key==='ArrowLeft')  wallSelect((wallActiveIdx-1+wallThkData.items.length)%wallThkData.items.length);
+        return;
+      }
       if(mode!=='results'||!analysis||!analysis.items.length)return;
       if(e.key==='ArrowRight')select((active+1)%analysis.items.length);
       if(e.key==='ArrowLeft')select((active-1+analysis.items.length)%analysis.items.length);
+    });
+    $('wallcheck').addEventListener('click', runWallCheck);
+    $('showdfm').addEventListener('click', function(){
+      if(analysis){ setMode('results'); buildList();
+        if(analysis.items.length) select(active>=0?active:0); else showEmpty();
+        paint();
+      } else { setMode(pullVec?'ready':'pick'); paint(); }
     });
     // ---- context menu: View Normal to Face ----
     $('ctx-viewnormal').addEventListener('click',function(){

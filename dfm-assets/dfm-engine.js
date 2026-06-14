@@ -126,11 +126,19 @@ var PDF='NADCA-Product-Standards-for-Die-Casting.pdf';
 var RULES={
   draftInsideDeg:1.9, draftOutsideDeg:0.95, draftHoleDeg:2.86,
   filletSharpMM:0.5, minWallMM:1.0,
-  refDraft:   {clause:'NADCA S-4A-7-15 — Draft Requirements',            page:105},
-  refFillet:  {clause:'NADCA Sec. 6, p.6-4 — Fillets',                  page:178},
-  refHole:    {clause:'NADCA P-4A-9 / p.4A-31 — Cored Holes',           page:115},
-  refWall:    {clause:'NADCA p.4A-31/32 — Wall Thickness',               page:115},
-  refUndercut:{clause:'NADCA Sec. 3 — Parting Line, Draft & Undercuts',  page: 84}
+  // Wall thickness — NADCA P-4A-3-15
+  minWallDesignMM:1.2,  // design-standard minimum for aluminum (commercial practice)
+  minWallAchievMM:0.8,  // achievable absolute minimum in ideal tooling conditions
+  // Wall uniformity — NADCA G-6-1-15 (ratio = thicker ÷ thinner)
+  wallThkRatioWarn:2.0, // ≥ 2:1  → risk of turbulence, differential shrinkage
+  wallThkRatioCrit:3.0, // ≥ 3:1  → high risk of cold shuts, porosity, distortion
+  refDraft:    {clause:'NADCA S-4A-7-15 — Draft Requirements',                           page:105},
+  refFillet:   {clause:'NADCA Sec. 6, p.6-4 (G-6-2-15) — Fillets',                      page:178},
+  refHole:     {clause:'NADCA P-4A-9 / p.4A-31 — Cored Holes',                          page:115},
+  refWall:     {clause:'NADCA p.4A-31/32 — Wall Thickness',                              page:115},
+  refUndercut: {clause:'NADCA Sec. 3 — Parting Line, Draft & Undercuts',                 page: 84},
+  refWallThk:  {clause:'NADCA P-4A-3-15 — Minimum Wall Thickness (Aluminum)',            page:109},
+  refWallUnif: {clause:'NADCA G-6-1-15 — Section Uniformity / Abrupt Changes (Sec. 6)', page:173}
 };
 
 // build concern items. Each item references one or more face indices (faces[]).
@@ -407,6 +415,134 @@ function buildItems(faces, pull, pullName){
   return items;
 }
 
+// ---------- Wall Thickness Analysis ----------
+// faceThkMM : Array indexed by face index → measured wall thickness in mm (−1 = no hit / unknown)
+// faces     : output of analyzeFaces()
+// Returns   : { items[], minThk, maxThk, avgThk, faceThkMM }
+function analyzeWallThickness(faceThkMM, faces){
+  var items=[];
+
+  // Collect faces with valid measurements
+  var valid=[];
+  faces.forEach(function(f){
+    if(f.empty||f.index===undefined) return;
+    var t=faceThkMM[f.index];
+    if(t===undefined||t<0) return;
+    valid.push({f:f,t:t});
+  });
+  if(!valid.length) return {items:items,minThk:0,maxThk:0,avgThk:0,faceThkMM:faceThkMM};
+
+  var allT=valid.map(function(v){return v.t;});
+  var minThk=Math.min.apply(null,allT);
+  var maxThk=Math.max.apply(null,allT);
+  var avgThk=allT.reduce(function(a,b){return a+b;},0)/allT.length;
+
+  // ── Item A: walls below achievable minimum ──────────────────────────────
+  var thinCrit=[], thinWarn=[];
+  valid.forEach(function(v){
+    if(v.t < RULES.minWallAchievMM)      thinCrit.push(v.f);
+    else if(v.t < RULES.minWallDesignMM) thinWarn.push(v.f);
+  });
+
+  if(thinCrit.length){
+    items.push({
+      faces:thinCrit.map(function(f){return f.index;}), sev:'crit',
+      type:'Wall too thin — below achievable minimum ('+thinCrit.length+' face(s))',
+      current:thinCrit.length+' face(s) measured below '+RULES.minWallAchievMM.toFixed(1)+' mm '+
+              '(thinnest: '+minThk.toFixed(2)+' mm). Metal cannot reliably fill sections this thin; '+
+              'cold shuts, misruns and surface porosity are highly probable.',
+      recommended:'NADCA P-4A-3-15 achievable minimum for aluminum: '+RULES.minWallAchievMM.toFixed(1)+' mm. '+
+              'Design standard minimum: '+RULES.minWallDesignMM.toFixed(1)+' mm. '+
+              'Increase wall thickness, add stiffening ribs, or split the feature.',
+      ref:RULES.refWallThk, metric:minThk
+    });
+  }
+  if(thinWarn.length){
+    items.push({
+      faces:thinWarn.map(function(f){return f.index;}), sev:'warn',
+      type:'Wall below design standard minimum ('+thinWarn.length+' face(s))',
+      current:thinWarn.length+' face(s) measure '+RULES.minWallAchievMM.toFixed(1)+'–'+RULES.minWallDesignMM.toFixed(1)+' mm '+
+              '— achievable in ideal conditions but below the NADCA commercial design standard. '+
+              'Risk of porosity and fill inconsistency, especially in large projected areas.',
+      recommended:'NADCA P-4A-3-15 recommends ≥ '+RULES.minWallDesignMM.toFixed(1)+' mm for standard production tooling. '+
+              'If thin walls are unavoidable, gate close to the thin section and use higher metal temperature / injection speed.',
+      ref:RULES.refWallThk, metric:minThk
+    });
+  }
+
+  // ── Item B: abrupt thickness transitions (O(N²) proximity check) ────────
+  var abruptCrit={}, abruptWarn={};
+  for(var i=0;i<valid.length;i++){
+    var vi=valid[i]; if(vi.t<=0) continue;
+    for(var j=i+1;j<valid.length;j++){
+      var vj=valid[j]; if(vj.t<=0) continue;
+      var ratio=Math.max(vi.t,vj.t)/Math.min(vi.t,vj.t);
+      if(ratio < RULES.wallThkRatioWarn) continue;
+      // Spatial proximity — threshold scales with the combined face footprint
+      var dx=vi.f.centroidMM[0]-vj.f.centroidMM[0];
+      var dy=vi.f.centroidMM[1]-vj.f.centroidMM[1];
+      var dz=vi.f.centroidMM[2]-vj.f.centroidMM[2];
+      var dist=Math.sqrt(dx*dx+dy*dy+dz*dz);
+      var reach=Math.sqrt((vi.f.areaMM2||1)+(vj.f.areaMM2||1))*2.2;
+      if(dist > reach) continue;
+      if(ratio >= RULES.wallThkRatioCrit){
+        abruptCrit[vi.f.index]=vi.f; abruptCrit[vj.f.index]=vj.f;
+      } else {
+        if(!abruptCrit[vi.f.index]) abruptWarn[vi.f.index]=vi.f;
+        if(!abruptCrit[vj.f.index]) abruptWarn[vj.f.index]=vj.f;
+      }
+    }
+  }
+  var critTransFaces=Object.keys(abruptCrit).map(function(k){return abruptCrit[k];});
+  var warnTransFaces=Object.keys(abruptWarn).map(function(k){return abruptWarn[k];});
+
+  if(critTransFaces.length){
+    items.push({
+      faces:critTransFaces.map(function(f){return f.index;}), sev:'crit',
+      type:'Abrupt wall change ≥ 3:1 ratio ('+critTransFaces.length+' face(s))',
+      current:'Adjacent faces with wall-thickness ratio ≥ '+RULES.wallThkRatioCrit.toFixed(0)+':1 found. '+
+              'Severe step changes cause turbulent metal flow, trapped gas, shrinkage porosity and '+
+              'differential cooling stresses — all major die casting defect drivers.',
+      recommended:'Blend thick-to-thin transitions with tapered ramps (15–30° taper angle) or radius blends. '+
+              'NADCA G-6-1-15: "heavy sections, as well as abrupt changes in sectional thickness, should be avoided." '+
+              'Replace thick sections with ribbed structures to maintain stiffness at lower mass.',
+      ref:RULES.refWallUnif, metric:RULES.wallThkRatioCrit
+    });
+  }
+  if(warnTransFaces.length){
+    items.push({
+      faces:warnTransFaces.map(function(f){return f.index;}), sev:'warn',
+      type:'Wall thickness change 2:1 to 3:1 — blend recommended ('+warnTransFaces.length+' face(s))',
+      current:'Adjacent faces with thickness ratio between 2:1 and 3:1. '+
+              'Abrupt transitions promote turbulent fill and uneven solidification, risking internal porosity.',
+      recommended:'NADCA guidelines: maximum section thickness ratio ≤ 2× the thinnest wall. '+
+              'Introduce tapered blends, fillets or gussets at wall junctions. '+
+              'G-6-1-15 (Sec. 6, p.6-3) and G-6-3-15 (Ribs & Corners) both address section transitions.',
+      ref:RULES.refWallUnif, metric:RULES.wallThkRatioWarn
+    });
+  }
+
+  // ── Summary item (always present, sorted to top) ─────────────────────────
+  var hasCrit=thinCrit.length||critTransFaces.length;
+  var hasWarn=thinWarn.length||warnTransFaces.length;
+  items.unshift({
+    faces:[], sev:'info',
+    type:'Summary — '+valid.length+' faces measured',
+    current:'Min: '+minThk.toFixed(2)+' mm   Avg: '+avgThk.toFixed(2)+' mm   Max: '+maxThk.toFixed(2)+' mm. '+
+            (hasCrit?'Critical issues found — see items below.':
+             hasWarn?'Warnings found — review highlighted faces.':
+             'All measured walls meet NADCA design standard (≥ '+RULES.minWallDesignMM.toFixed(1)+' mm).'),
+    recommended:'NADCA P-4A-3-15 design minimum: '+RULES.minWallDesignMM.toFixed(1)+' mm; achievable minimum: '+
+                RULES.minWallAchievMM.toFixed(1)+' mm. '+
+                'Target uniform sections; if variable thickness is needed keep max/min ratio ≤ 2:1 with blended transitions.',
+    ref:RULES.refWallThk, metric:minThk
+  });
+
+  items.sort(function(a,b){var o={crit:0,warn:1,info:2};return o[a.sev]-o[b.sev];});
+  items.forEach(function(it,i){it.n=i+1;});
+  return {items:items,minThk:minThk,maxThk:maxThk,avgThk:avgThk,faceThkMM:faceThkMM};
+}
+
 function run(mesh, stepText, opts){
   opts=opts||{};
   var unit=detectUnit(stepText||'');
@@ -435,7 +571,8 @@ function run(mesh, stepText, opts){
           pull:pull, pullName:pn, census:census, nFaces:faces.length, RULES:RULES, PDF:PDF};
 }
 
-var API={run:run, analyzeFaces:analyzeFaces, detectUnit:detectUnit, RULES:RULES, eig3:eig3};
+var API={run:run, analyzeFaces:analyzeFaces, analyzeWallThickness:analyzeWallThickness,
+         detectUnit:detectUnit, RULES:RULES, eig3:eig3};
 if(typeof module!=='undefined'&&module.exports) module.exports=API;
 root.DfMEngine=API;
 })(typeof window!=='undefined'?window:globalThis);
