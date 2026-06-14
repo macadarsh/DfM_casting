@@ -166,6 +166,27 @@
     text-transform:uppercase;letter-spacing:.6px;
   }
   .ctx-sep{border:none;border-top:1px solid var(--line);margin:3px 0}
+
+  /* ---------- face info tooltip ---------- */
+  #face-tip{
+    position:fixed;z-index:997;pointer-events:none;
+    background:var(--panel);border:1px solid var(--line);
+    border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.55);
+    padding:10px 13px;min-width:210px;max-width:290px;
+    font-size:12px;display:none;
+  }
+  #face-tip.show{display:block}
+  .fi-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px}
+  .fi-face{font-weight:700;font-size:13px}
+  .fi-kind{color:var(--mut);font-size:11px;margin-left:6px}
+  .fi-row{display:flex;justify-content:space-between;align-items:baseline;margin:3px 0}
+  .fi-label{color:var(--mut)}
+  .fi-val{font-weight:600;font-variant-numeric:tabular-nums}
+  .fi-sep{border:none;border-top:1px solid var(--line);margin:7px 0 6px}
+  .fi-ok{color:#3fb950;font-weight:600;font-size:12px}
+  .fi-crit{color:#f24338;font-weight:700;font-size:12px}
+  .fi-warn{color:#e6c43a;font-weight:700;font-size:12px}
+  .fi-desc{color:var(--mut);font-size:11px;margin-top:3px;line-height:1.45}
 </style>
 </head>
 <body>
@@ -241,6 +262,9 @@
     </div>
     <div id="loading"><div class="spin"></div><div class="muted" id="loadtxt">Loading geometry kernel…</div></div>
 
+    <!-- face info tooltip (shown on left-click in results mode) -->
+    <div id="face-tip"></div>
+
     <!-- right-click context menu (positioned fixed, shown on planar face right-click) -->
     <div id="ctx-menu">
       <div class="ctx-face-name" id="ctx-face-label">Flat Surface</div>
@@ -282,7 +306,8 @@
       mode='empty', pullFaceIdx=-1, pullVec=null, arrow=null,
       triScene=null, triCam=null, triRenderer=null, triReady=false,
       _orbitQuat=null, _orbitDist=1, _orthoSize=1,  // arcball + ortho state
-      _panDist=0;                                    // pixel distance of last right-drag (used to distinguish click vs drag)
+      _panDist=0,                                    // pixel distance of last right-drag (used to distinguish click vs drag)
+      _pickedFace=-1;                                // face idx shown in face-info tooltip
 
   // face colors:  green = OK,  red = critical concern,  yellow = minor / verify,
   //               *Active variants are brighter*,  blue = pull-direction face,
@@ -610,19 +635,87 @@
     geom.attributes.color.needsUpdate=true;
   }
 
+  // ---- face info tooltip (results mode) ----
+  function _dot3(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+
+  function showFaceInfo(fi, cx, cy){
+    if(!faceInfo||!faceInfo[fi]||!analysis) return;
+    var f=faceInfo[fi];
+    // --- Kind label ---
+    var kindMap={planar:'Flat (Planar)',cylindrical:'Cylindrical',conical:'Conical'};
+    var kindLabel=kindMap[f.kind]||f.kind||'Unknown';
+    // --- Area ---
+    var areaText=f.areaMM2!=null ? f.areaMM2.toFixed(1)+' mm²' : '—';
+    // --- Draft angle (planar faces only) ---
+    var draftText='—';
+    if(f.kind==='planar' && pullVec && f.normal && !f.empty){
+      var d=Math.abs(_dot3(f.normal,pullVec));
+      d=Math.max(0,Math.min(1,d));
+      draftText=(Math.asin(d)*180/Math.PI).toFixed(1)+'°';
+    } else if(f.kind!=='planar'){
+      draftText='N/A';
+    }
+    // --- Issues on this face ---
+    var issues=analysis.items.filter(function(it){return it.faces.indexOf(fi)>=0;});
+    var statusHtml='';
+    if(issues.length===0){
+      statusHtml='<div class="fi-ok">✓ OK — no issues detected</div>';
+    } else {
+      issues.forEach(function(it){
+        var icon=it.sev==='crit'?'✕':'⚠';
+        var cls=it.sev==='crit'?'fi-crit':'fi-warn';
+        statusHtml+='<div class="'+cls+'">'+icon+' '+esc(it.type)+'</div>';
+        if(it.current){
+          var desc=it.current.length>130 ? it.current.slice(0,128)+'…' : it.current;
+          statusHtml+='<div class="fi-desc">'+esc(desc)+'</div>';
+        }
+      });
+    }
+    // --- Build HTML ---
+    var tip=$('face-tip');
+    tip.innerHTML=
+      '<div class="fi-head"><span class="fi-face">Face&nbsp;'+fi+'</span>'+
+        '<span class="fi-kind">'+kindLabel+'</span></div>'+
+      '<div class="fi-row"><span class="fi-label">Area</span><span class="fi-val">'+areaText+'</span></div>'+
+      '<div class="fi-row"><span class="fi-label">Draft angle</span><span class="fi-val">'+draftText+'</span></div>'+
+      '<hr class="fi-sep">'+statusHtml;
+    // --- Position: near click, clamped ---
+    tip.style.left=(cx+14)+'px';
+    tip.style.top=(cy-14)+'px';
+    tip.classList.add('show');
+    requestAnimationFrame(function(){
+      var r=tip.getBoundingClientRect();
+      if(r.right >window.innerWidth)  tip.style.left=(cx-r.width-6)+'px';
+      if(r.bottom>window.innerHeight) tip.style.top=(cy-r.height)+'px';
+    });
+    _pickedFace=fi;
+  }
+
+  function hideFaceInfo(){
+    $('face-tip').classList.remove('show');
+    _pickedFace=-1;
+  }
+
   function onPick(ev){
     if(!mesh3) return;
     var rect=renderer.domElement.getBoundingClientRect();
     var mx=((ev.clientX-rect.left)/rect.width)*2-1, my=-((ev.clientY-rect.top)/rect.height)*2+1;
     raycaster.setFromCamera({x:mx,y:my},camera);
     var hit=raycaster.intersectObject(mesh3);
-    if(!hit.length) return;
+    if(!hit.length){
+      hideFaceInfo();   // clicked background — dismiss tooltip and deselect
+      if(mode==='results'&&active>=0){active=-1;paint();}
+      return;
+    }
     var face=triFace[hit[0].faceIndex];
     if(mode==='pick' || mode==='ready'){ setPullFace(face); return; }
     if(mode==='results' && analysis){
+      showFaceInfo(face, ev.clientX, ev.clientY);
       for(var i=0;i<analysis.items.length;i++){
         if(analysis.items[i].faces.indexOf(face)>=0){ select(i); return; }
       }
+      // Green (OK) face clicked — deselect current highlight but keep tooltip
+      active=-1; paint();
     }
   }
 
@@ -743,6 +836,7 @@
 
   // ---- step / mode controller (guides the user) ----
   function setMode(m){
+    hideFaceInfo();
     mode=m;
     var step={empty:1,pick:2,ready:3,results:4}[m]||1;
     Array.prototype.forEach.call(document.querySelectorAll('#steps .step'),function(ch){
