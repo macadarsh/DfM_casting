@@ -97,13 +97,22 @@ function analyzeFaces(mesh, scale){
       face.axis=axis;
       // radius = distance from vertices to axis line through centroid
       var rmin=Infinity,rmax=0,rsum=0,nv=0;
+      var outerVoteSum=0, outerVoteN=0;
       tris.forEach(function(tr){tr.v.forEach(function(p){
         var d=sub(p,cen); var proj=dot(d,axis);
         var perp=[d[0]-proj*axis[0],d[1]-proj*axis[1],d[2]-proj*axis[2]];
-        var r=len(perp)*scale;
+        var plen=len(perp);
+        var r=plen*scale;
         if(r<rmin)rmin=r; if(r>rmax)rmax=r; rsum+=r; nv++;
+        // Vote: does the face normal point AWAY from (outer) or TOWARD (bore) the axis?
+        if(plen>1e-6){
+          var rn=[perp[0]/plen,perp[1]/plen,perp[2]/plen];
+          outerVoteSum+=dot(tr.un,rn); outerVoteN++;
+        }
       });});
       face.radiusMinMM=rmin; face.radiusMaxMM=rmax; face.radiusMM=rsum/nv;
+      // isOuter: true = normals point away from axis (outer boss/shell), false = bore / inner pocket
+      face.isOuter = (outerVoteN>0 && outerVoteSum/outerVoteN > 0);
       // cone if radius varies notably along the face, else cylinder
       face.kind = (rmax-rmin) > 0.15*Math.max(rmax,1e-6) ? 'conical' : 'cylindrical';
     }
@@ -149,6 +158,7 @@ function buildItems(faces, pull, pullName){
     } else if(f.kind==='cylindrical'){
       var dia=(f.radiusMM*2);
       if(f.radiusMM <= RULES.filletSharpMM){
+        // Small-radius cylinder = blend fillet / sharp edge — always flag regardless of orientation.
         items.push({
           faces:[f.index], sev:'warn', type:'Near-sharp internal radius',
           current:'Cylindrical blend radius ≈ '+f.radiusMM.toFixed(2)+' mm — close to a sharp corner.',
@@ -156,15 +166,19 @@ function buildItems(faces, pull, pullName){
                   'Sharp corners concentrate stress and crack the die.',
           ref:RULES.refFillet, metric:f.radiusMM
         });
-      } else {
+      } else if(!f.isOuter && Math.abs(dot(f.axis,pull)) >= 0.5){
+        // Inner bore whose axis is roughly parallel to pull → can be formed by a core pin.
+        // (Perpendicular inner bores are caught by the side-core check below.)
+        // Outer cylindrical surfaces (main body, bosses) just need draft taper — no item needed.
         items.push({
           faces:[f.index], sev:'info', type:'Cored hole / boss — verify',
-          current:'Cylindrical face Ø ≈ '+dia.toFixed(2)+' mm (radius '+f.radiusMM.toFixed(2)+' mm, approx).',
+          current:'Inner cylindrical bore Ø ≈ '+dia.toFixed(2)+' mm (radius '+f.radiusMM.toFixed(2)+' mm).',
           recommended:'Cored holes need their own draft (C=20 → ≈2.9° total) and adequate wall stock around the bore. '+
                   'Confirm depth-to-diameter ratio and trim allowance.',
           ref:RULES.refHole, metric:dia
         });
       }
+      // else: outer cylindrical surface or perpendicular bore — handled elsewhere, no extra item.
     } else if(f.kind==='conical'){
       coneFaces.push(f.index);
     }
@@ -207,7 +221,9 @@ function buildItems(faces, pull, pullName){
         else             undercutWarn.push(f);
       }
     }
-    if((f.kind==='cylindrical'||f.kind==='conical') && f.axis){
+    // Strategy B: inner bore/pocket whose axis is perpendicular to pull → side core required.
+    // Outer surfaces (main body shell, outer bosses) are excluded — they don't trap the die.
+    if(!f.isOuter && (f.kind==='cylindrical'||f.kind==='conical') && f.axis){
       if(Math.abs(dot(f.axis,pull)) < 0.5) sidecoreList.push(f);
     }
   });
