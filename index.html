@@ -144,6 +144,28 @@
     border-radius:50%;animation:sp 0.9s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
   .muted{color:var(--mut)}
+
+  /* ---------- right-click context menu ---------- */
+  #ctx-menu{
+    position:fixed;z-index:999;
+    background:var(--panel);border:1px solid var(--line);
+    border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.55);
+    padding:4px 0;min-width:200px;display:none;
+  }
+  #ctx-menu.show{display:block}
+  .ctx-item{
+    display:flex;align-items:center;gap:9px;
+    padding:9px 14px;cursor:pointer;font-size:13px;
+    white-space:nowrap;
+  }
+  .ctx-item:hover{background:var(--panel2)}
+  .ctx-item.disabled{color:var(--mut);cursor:default;opacity:.5}
+  .ctx-item.disabled:hover{background:none}
+  .ctx-face-name{
+    font-size:10px;color:var(--mut);padding:7px 14px 3px;
+    text-transform:uppercase;letter-spacing:.6px;
+  }
+  .ctx-sep{border:none;border-top:1px solid var(--line);margin:3px 0}
 </style>
 </head>
 <body>
@@ -199,7 +221,7 @@
       <div><i style="background:#4a9eff"></i>Pull-direction face</div>
       <div><i style="background:#3fb950"></i>OK surface</div>
     </div>
-    <div class="vhint">drag = rotate · scroll = zoom · right-drag = pan</div>
+    <div class="vhint">drag = rotate · scroll = zoom · right-drag = pan · right-click flat face = view options</div>
     <div id="pickhint">Click the face that is normal to the pull / ejection direction</div>
     <div id="navbar" style="display:none">
       <button id="prev">‹ Prev</button>
@@ -218,6 +240,13 @@
       <input id="file" type="file" accept=".step,.stp,.STEP,.STP">
     </div>
     <div id="loading"><div class="spin"></div><div class="muted" id="loadtxt">Loading geometry kernel…</div></div>
+
+    <!-- right-click context menu (positioned fixed, shown on planar face right-click) -->
+    <div id="ctx-menu">
+      <div class="ctx-face-name" id="ctx-face-label">Flat Surface</div>
+      <hr class="ctx-sep">
+      <div class="ctx-item" id="ctx-viewnormal">⊥ &nbsp;View Normal to Face</div>
+    </div>
   </div>
 
   <!-- ============ RIGHT DETAIL PANEL ============ -->
@@ -252,7 +281,8 @@
       raycaster, triFace=null, faceInfo=null,
       mode='empty', pullFaceIdx=-1, pullVec=null, arrow=null,
       triScene=null, triCam=null, triRenderer=null, triReady=false,
-      _orbitQuat=null, _orbitDist=1, _orthoSize=1;  // arcball + ortho state
+      _orbitQuat=null, _orbitDist=1, _orthoSize=1,  // arcball + ortho state
+      _panDist=0;                                    // pixel distance of last right-drag (used to distinguish click vs drag)
 
   // face colors:  green = OK,  red = critical concern,  yellow = minor / verify,
   //               *Active variants are brighter*,  blue = pull-direction face,
@@ -323,7 +353,7 @@
 
       cv.addEventListener('mousedown',function(e){
         if(e.button===0){rot=true; lx=e.clientX; ly=e.clientY; vS.copy(proj(lx,ly));}
-        if(e.button===2){pan=true; lx=e.clientX; ly=e.clientY;}
+        if(e.button===2){pan=true; lx=e.clientX; ly=e.clientY; _panDist=0;}
       });
 
       window.addEventListener('mousemove',function(e){
@@ -344,8 +374,10 @@
           vS.copy(vE);  // rolling delta — update start for next mousemove
         }
         if(pan){
+          var ddx=e.clientX-lx, ddy=e.clientY-ly;
+          _panDist+=Math.sqrt(ddx*ddx+ddy*ddy);
           var r=cv.getBoundingClientRect();
-          var dx=(e.clientX-lx)/r.width, dy=(e.clientY-ly)/r.height;
+          var dx=ddx/r.width, dy=ddy/r.height;
           // Camera right/up derived from the orbit quaternion — always correct frame.
           var rt=new THREE.Vector3(1,0,0).applyQuaternion(_orbitQuat);
           var up=new THREE.Vector3(0,1,0).applyQuaternion(_orbitQuat);
@@ -367,8 +399,41 @@
         _syncCam();  // _syncCam updates frustum + calls updateProjectionMatrix
       },{passive:false});
 
-      cv.addEventListener('contextmenu',function(e){e.preventDefault();});
+      // Right-click: show context menu only if pointer barely moved (not a pan drag).
+      cv.addEventListener('contextmenu',function(e){
+        e.preventDefault();
+        $('ctx-menu').classList.remove('show');
+        if(!mesh3||_panDist>4) return;       // was a drag, not a click
+        var rect=cv.getBoundingClientRect();
+        var mx=((e.clientX-rect.left)/rect.width)*2-1;
+        var my=-((e.clientY-rect.top)/rect.height)*2+1;
+        raycaster.setFromCamera({x:mx,y:my},camera);
+        var hits=raycaster.intersectObject(mesh3);
+        if(!hits.length) return;
+        var fi=triFace[hits[0].faceIndex];
+        var fi_info=faceInfo&&faceInfo[fi];
+        var isPlanar=fi_info&&!fi_info.empty&&fi_info.kind==='planar';
+        var ni=isPlanar?fi:-1;
+        $('ctx-viewnormal')._faceIdx=ni;
+        $('ctx-viewnormal').classList.toggle('disabled',ni<0);
+        $('ctx-face-label').textContent=isPlanar?'Flat Surface (face '+fi+')':'Surface (not flat)';
+        // Position menu — clamp to viewport so it doesn't overflow
+        var menu=$('ctx-menu');
+        menu.style.left=e.clientX+'px';
+        menu.style.top=e.clientY+'px';
+        menu.classList.add('show');
+        requestAnimationFrame(function(){
+          var mr=menu.getBoundingClientRect();
+          if(mr.right>window.innerWidth)  menu.style.left=(e.clientX-mr.width)+'px';
+          if(mr.bottom>window.innerHeight) menu.style.top=(e.clientY-mr.height)+'px';
+        });
+      });
     })();
+    // Dismiss context menu on any left-click or Escape anywhere
+    document.addEventListener('click',function(){$('ctx-menu').classList.remove('show');});
+    document.addEventListener('keydown',function(e){
+      if(e.key==='Escape') $('ctx-menu').classList.remove('show');
+    });
     scene.add(new THREE.AmbientLight(0xffffff,0.55));
     var d1=new THREE.DirectionalLight(0xffffff,0.8); d1.position.set(1,1.5,1); scene.add(d1);
     var d2=new THREE.DirectionalLight(0xffffff,0.4); d2.position.set(-1,-0.5,-1); scene.add(d2);
@@ -494,6 +559,27 @@
     _syncCam();
     // Wide near/far for orthographic + 360° rotation — model stays visible from any angle.
     camera.near=-r*100; camera.far=r*100; camera.updateProjectionMatrix();
+  }
+
+  // Orient camera to look straight at a face (along face normal, into the surface).
+  // Model fills ~70% of the viewport.
+  function viewNormalToFace(fi){
+    if(!geom||!faceInfo||!faceInfo[fi]) return;
+    var f=faceInfo[fi];
+    if(!f.normal||f.empty) return;
+    var s=geom.boundingSphere, c=s.center, r=s.radius||1;
+    // Build unit normal in Three.js coords
+    var n=new THREE.Vector3(f.normal[0],f.normal[1],f.normal[2]).normalize();
+    // Eye is placed along the face normal from the model centre
+    var eye=c.clone().addScaledVector(n,r*5);
+    // Avoid gimbal when looking straight up/down: switch up hint to Z
+    var upHint=Math.abs(n.y)<0.9?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1);
+    var m4=new THREE.Matrix4().lookAt(eye,c,upHint);
+    _orbitQuat.setFromRotationMatrix(m4);
+    controls.target.copy(c);
+    // _orthoSize = r / 0.70 → model radius occupies 70% of frustum half-height
+    _orthoSize=r/0.70;
+    _syncCam();
   }
 
   // set vertex colors based on current mode
@@ -760,6 +846,13 @@
       if(mode!=='results'||!analysis||!analysis.items.length)return;
       if(e.key==='ArrowRight')select((active+1)%analysis.items.length);
       if(e.key==='ArrowLeft')select((active-1+analysis.items.length)%analysis.items.length);
+    });
+    // ---- context menu: View Normal to Face ----
+    $('ctx-viewnormal').addEventListener('click',function(){
+      var fi=this._faceIdx;
+      $('ctx-menu').classList.remove('show');
+      if(fi==null||fi<0) return;
+      viewNormalToFace(fi);
     });
   }
 
