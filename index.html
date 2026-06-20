@@ -332,8 +332,7 @@
           <span id="wt-lbl-min">—</span>
         </div>
       </div>
-      <div class="wt-thresh-row"><i style="background:#e6c43a;border:none;display:inline-block"></i><span>NADCA min 1.2 mm</span></div>
-      <div class="wt-thresh-row"><i style="background:#f24338;border:none;display:inline-block"></i><span>NADCA crit 0.8 mm</span></div>
+      <div class="wt-thresh-row" style="margin-top:3px;font-size:9px;color:var(--mut);justify-content:center">Scale: part min → max</div>
     </div>
 
     <!-- cross-section control panel -->
@@ -428,6 +427,7 @@
   var clipFlipped=false;          // flip clip direction?
   var clipPlaneObj=new THREE.Plane(new THREE.Vector3(0,-1,0),0); // THREE.Plane used for clipping
   var sectionCapGroup=null;       // THREE.Group holding stencil + cap meshes for solid cross-section
+  var _capRebuildTimer=null;      // debounce timer for re-coloring cap after slider drag
 
   // face colors:  green = OK,  red = critical concern,  yellow = minor / verify,
   //               *Active variants are brighter*,  blue = pull-direction face,
@@ -1512,28 +1512,95 @@
       m.stencilFail=op; m.stencilZFail=op; m.stencilZPass=op;
       return m;
     }
-    // Stencil-write meshes share the SAME geometry as the model (no copy needed)
     var sBack=new THREE.Mesh(geom, makeStencilMat(true));
     var sFront=new THREE.Mesh(geom, makeStencilMat(false));
     g.add(sBack); g.add(sFront);
 
-    // Cap plane — large enough to always cover the model cross-section
-    var capGeom=new THREE.PlaneGeometry(r*6, r*6);
-    var capMat=new THREE.MeshStandardMaterial({
-      color:0x6e8a9e,        // neutral grey-blue fill colour for the cut face
-      metalness:0.05, roughness:0.75, side:THREE.DoubleSide,
-      stencilWrite:true, stencilRef:0,
-      stencilFunc:THREE.NotEqualStencilFunc,
-      stencilFail:THREE.ReplaceStencilOp,
-      stencilZFail:THREE.ReplaceStencilOp,
-      stencilZPass:THREE.ReplaceStencilOp,
-      depthWrite:true, clippingPlanes:[],
-    });
+    var capGeom, capMat;
+
+    if(mode==='wt' && vertThkMap && wallThkData){
+      // ── Thickness-colored cap ──────────────────────────────────────────────
+      // Build a vertex-colored grid so the cut face shows the same rainbow
+      // heatmap as the model surface, matching professional FEA section views.
+      var segs=28; // (segs+1)^2 = 841 vertices — fast lookup, smooth gradient
+      capGeom=new THREE.PlaneGeometry(r*6, r*6, segs, segs);
+
+      // Quaternion that syncCapPlane() will apply (local Z → clip normal)
+      var n=clipPlaneObj.normal.clone().normalize();
+      var planePos=n.clone().multiplyScalar(-clipPlaneObj.constant);
+      var q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,0,1), n);
+
+      // Flatten vertThkMap into an array for fast iteration
+      var vtxArr=[];
+      Object.keys(vertThkMap).forEach(function(k){
+        var p=k.split('_');
+        vtxArr.push([parseInt(p[0])*1e-3, parseInt(p[1])*1e-3, parseInt(p[2])*1e-3, vertThkMap[k]]);
+      });
+
+      // Pre-filter: only model surface vertices within ±eps of the cut plane.
+      // Die-cast walls are thin, so nearby surface vertices represent local thickness.
+      var planeEps=Math.max(r*0.25, (wallThkData.maxThk||10)*2);
+      var near=[];
+      for(var vi2=0;vi2<vtxArr.length;vi2++){
+        var pd=n.x*vtxArr[vi2][0]+n.y*vtxArr[vi2][1]+n.z*vtxArr[vi2][2]+clipPlaneObj.constant;
+        if(Math.abs(pd)<planeEps) near.push(vtxArr[vi2]);
+      }
+      if(!near.length) near=vtxArr; // fallback: no vertices near plane (open space)
+
+      var tMin=wallThkData.minThk, tMax=wallThkData.maxThk;
+      var capPos=capGeom.attributes.position.array;
+      var nCapV=capPos.length/3;
+      var colArr=new Float32Array(nCapV*3);
+      var maxSnapD2=(r*0.35)*(r*0.35); // ignore model vertices too far laterally
+
+      var tmpV=new THREE.Vector3();
+      for(var ci=0;ci<nCapV;ci++){
+        // Local plane vertex (u,v,0) → world position via quaternion + translation
+        tmpV.set(capPos[ci*3], capPos[ci*3+1], 0).applyQuaternion(q).add(planePos);
+        var wx=tmpV.x, wy=tmpV.y, wz=tmpV.z;
+
+        // Nearest model vertex (in 3D) from the pre-filtered near-plane set
+        var bestD2=Infinity, bestThk=-1;
+        for(var ni=0;ni<near.length;ni++){
+          var dx=wx-near[ni][0], dy=wy-near[ni][1], dz=wz-near[ni][2];
+          var d2=dx*dx+dy*dy+dz*dz;
+          if(d2<bestD2){bestD2=d2;bestThk=near[ni][3];}
+        }
+
+        var c=(bestThk>=0&&bestD2<=maxSnapD2)?thkToRainbow(bestThk,tMin,tMax):COL.neutral;
+        colArr[ci*3]=c[0]; colArr[ci*3+1]=c[1]; colArr[ci*3+2]=c[2];
+      }
+
+      capGeom.setAttribute('color', new THREE.BufferAttribute(colArr, 3));
+      capMat=new THREE.MeshStandardMaterial({
+        vertexColors:true, flatShading:false,
+        metalness:0.1, roughness:0.6, side:THREE.DoubleSide,
+        stencilWrite:true, stencilRef:0,
+        stencilFunc:THREE.NotEqualStencilFunc,
+        stencilFail:THREE.ReplaceStencilOp,
+        stencilZFail:THREE.ReplaceStencilOp,
+        stencilZPass:THREE.ReplaceStencilOp,
+        depthWrite:true, clippingPlanes:[],
+      });
+    } else {
+      // ── Default flat grey cap ──────────────────────────────────────────────
+      capGeom=new THREE.PlaneGeometry(r*6, r*6);
+      capMat=new THREE.MeshStandardMaterial({
+        color:0x6e8a9e,
+        metalness:0.05, roughness:0.75, side:THREE.DoubleSide,
+        stencilWrite:true, stencilRef:0,
+        stencilFunc:THREE.NotEqualStencilFunc,
+        stencilFail:THREE.ReplaceStencilOp,
+        stencilZFail:THREE.ReplaceStencilOp,
+        stencilZPass:THREE.ReplaceStencilOp,
+        depthWrite:true, clippingPlanes:[],
+      });
+    }
+
     var capMesh=new THREE.Mesh(capGeom, capMat);
     capMesh.userData.isCap=true;
     g.userData.capMesh=capMesh;
     g.add(capMesh);
-
     sectionCapGroup=g;
     scene.add(g);
     syncCapPlane();
@@ -1591,6 +1658,13 @@
     clipPlaneObj.set(new THREE.Vector3(nx*sign,ny*sign,nz*sign),-pos*sign);
     $('section-val').textContent=pos.toFixed(1)+' mm';
     syncCapPlane();   // reposition the solid cap to track the slider
+
+    // In WT mode: debounce cap rebuild so colors update once slider settles.
+    // syncCapPlane() handles the instant position; colors update after 200ms of stillness.
+    if(mode==='wt' && vertThkMap){
+      if(_capRebuildTimer) clearTimeout(_capRebuildTimer);
+      _capRebuildTimer=setTimeout(function(){ _capRebuildTimer=null; buildSectionCap(); }, 200);
+    }
   }
 
   // Change the clip axis; reset slider to mid-point and update.
@@ -1626,6 +1700,8 @@
     $('wallcheck').classList.toggle('wt-active', isWt);
     // Smooth interpolation in WT mode; flat shading otherwise
     if(mesh3){ mesh3.material.flatShading=!isWt; mesh3.material.needsUpdate=true; }
+    // Rebuild section cap: colored in WT mode, flat grey otherwise
+    if(clipEnabled) buildSectionCap();
     $('refplane-ctl').style.display=hasModel?'flex':'none';
     $('sectionbtn').style.display=hasModel?'inline-block':'none';
     $('pickhint').classList.toggle('show', m==='pick');
