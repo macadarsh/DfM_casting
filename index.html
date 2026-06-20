@@ -188,18 +188,27 @@
   .fi-warn{color:#e6c43a;font-weight:700;font-size:12px}
   .fi-desc{color:var(--mut);font-size:11px;margin-top:3px;line-height:1.45}
 
-  /* ---------- wall thickness heatmap legend ---------- */
+  /* ---------- wall thickness heatmap legend (gradient bar) ---------- */
   #wtlegend{
     position:absolute;bottom:44px;left:10px;z-index:4;
     display:none;flex-direction:column;gap:4px;
-    background:rgba(12,16,21,.78);backdrop-filter:blur(6px);
+    background:rgba(12,16,21,.82);backdrop-filter:blur(6px);
     border:1px solid var(--line);border-radius:8px;padding:8px 11px;
     font-size:11px;
   }
   #wtlegend.show{display:flex}
-  #wtlegend .wt-title{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);margin-bottom:2px}
-  #wtlegend .wt-row{display:flex;align-items:center;gap:6px}
-  #wtlegend i{width:9px;height:9px;border-radius:2px;flex:none}
+  #wtlegend .wt-title{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);margin-bottom:4px}
+  .wt-grad-wrap{display:flex;gap:7px;align-items:stretch}
+  #wt-grad-canvas{border-radius:3px;flex:none}
+  .wt-grad-ticks{display:flex;flex-direction:column;justify-content:space-between;
+    color:var(--mut);font-size:10px;font-variant-numeric:tabular-nums;line-height:1.1}
+  .wt-thresh-row{display:flex;align-items:center;gap:5px;margin-top:5px;font-size:10px;color:var(--mut)}
+  .wt-thresh-row i{width:18px;height:2px;flex:none;border-radius:1px}
+
+  /* ---------- thickness profile chart ---------- */
+  .wt-chart-wrap{margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}
+  .wt-chart-title{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);margin-bottom:6px}
+  #wt-chart{display:block;border-radius:6px}
   button#wallcheck{background:var(--panel2);border:1px solid var(--line);color:var(--fg);transition:box-shadow .2s,border-color .2s,color .2s,background .2s}
   button#wallcheck:hover{border-color:var(--accent);color:var(--accent)}
   button#wallcheck.wt-active{
@@ -315,10 +324,16 @@
     <!-- wall thickness heatmap legend (shown only in wt mode) -->
     <div id="wtlegend">
       <div class="wt-title">Wall Thickness</div>
-      <div class="wt-row"><i style="background:#3fb950"></i><span>OK — ≥ 1.2 mm</span></div>
-      <div class="wt-row"><i style="background:#e6c43a"></i><span>Thin — 0.8–1.2 mm</span></div>
-      <div class="wt-row"><i style="background:#f24338"></i><span>Critical — &lt; 0.8 mm</span></div>
-      <div class="wt-row"><i style="background:#606878"></i><span>No data</span></div>
+      <div class="wt-grad-wrap">
+        <canvas id="wt-grad-canvas" width="14" height="100"></canvas>
+        <div class="wt-grad-ticks">
+          <span id="wt-lbl-max">—</span>
+          <span id="wt-lbl-mid">—</span>
+          <span id="wt-lbl-min">—</span>
+        </div>
+      </div>
+      <div class="wt-thresh-row"><i style="background:#e6c43a;border:none;display:inline-block"></i><span>NADCA min 1.2 mm</span></div>
+      <div class="wt-thresh-row"><i style="background:#f24338;border:none;display:inline-block"></i><span>NADCA crit 0.8 mm</span></div>
     </div>
 
     <!-- cross-section control panel -->
@@ -421,6 +436,44 @@
     warn:[0.62,0.47,0.10],  warnActive:[0.98,0.80,0.22],
     pull:[0.29,0.62,1.0],   neutral:[0.49,0.55,0.63]
   };
+
+  // ---- wall-thickness rainbow colormap ----
+  // Continuous HSV rainbow: blue (thin/cold) → cyan → green → yellow → red (thick/hot)
+  // Matches industry convention used in FEA thickness tools.
+  function thkToRainbow(tv, tMin, tMax){
+    if(tv<0) return COL.neutral;
+    var r=(tMax>tMin)?(tv-tMin)/(tMax-tMin):0.5;
+    r=Math.max(0,Math.min(1,r));
+    var h=(1-r)*240;          // hue: 240°=blue at min, 0°=red at max
+    var s=1,v=1;
+    var hi=Math.floor(h/60)%6;
+    var f=h/60-Math.floor(h/60);
+    var p=v*(1-s), q=v*(1-f*s), t2=v*(1-(1-f)*s);
+    switch(hi){
+      case 0: return[v,t2,p];
+      case 1: return[q,v, p];
+      case 2: return[p,v,t2];
+      case 3: return[p,q, v];
+      case 4: return[t2,p,v];
+      default:return[v, p,q];
+    }
+  }
+
+  // Render the gradient-bar canvas in the WT legend and update labels.
+  function drawWtLegendGradient(){
+    var cv=$('wt-grad-canvas'); if(!cv||!wallThkData) return;
+    var ctx=cv.getContext('2d'), h=cv.height;
+    var tMin=wallThkData.minThk, tMax=wallThkData.maxThk;
+    for(var y=0;y<h;y++){
+      var r=(h-1-y)/(h-1);   // r=1 (red) at top, r=0 (blue) at bottom
+      var c=thkToRainbow(tMin+r*(tMax-tMin),tMin,tMax);
+      ctx.fillStyle='rgb('+Math.round(c[0]*255)+','+Math.round(c[1]*255)+','+Math.round(c[2]*255)+')';
+      ctx.fillRect(0,y,cv.width,1);
+    }
+    $('wt-lbl-max').textContent=tMax.toFixed(1)+' mm';
+    $('wt-lbl-mid').textContent=((tMin+tMax)/2).toFixed(1)+' mm';
+    $('wt-lbl-min').textContent=tMin.toFixed(1)+' mm';
+  }
 
   // ---- WASM kernel init (once) ----
   function b64ToBytes(b64){
@@ -960,29 +1013,32 @@
 
   // ---- Wall Thickness Analysis ----
 
-  // Color model faces by measured wall thickness (3-tier: red / yellow / green / grey)
+  // Color model faces with a continuous HSV rainbow based on actual measured thickness.
+  // Blue = thin (min measured), Red = thick (max measured).
+  // Active/highlighted faces are brightened. No-data faces are neutral grey.
   function paintWallHeatmap(){
     if(!geom||!wallThkData) return;
     var col=geom.attributes.color.array, nTri=triFace.length;
-    var R=window.DfMEngine.RULES;
     var hiSet={};
     if(wallActiveIdx>=0&&wallThkData.items[wallActiveIdx]){
       wallThkData.items[wallActiveIdx].faces.forEach(function(f){hiSet[f]=1;});
     }
     var thk=wallThkData.faceThkMM;
+    var tMin=wallThkData.minThk, tMax=wallThkData.maxThk;
     for(var t=0;t<nTri;t++){
-      var fi=triFace[t], c, hi=hiSet[fi];
+      var fi=triFace[t], hi=hiSet[fi];
       var tv=thk[fi];
-      if(tv===undefined||tv<0)           c=COL.neutral;
-      else if(tv < R.minWallAchievMM)    c=hi?COL.critActive:COL.crit;
-      else if(tv < R.minWallDesignMM)    c=hi?COL.warnActive:COL.warn;
-      else                               c=hi?[0.30,0.85,0.38]:COL.ok;
+      var c=(tv===undefined||tv<0)?COL.neutral:thkToRainbow(tv,tMin,tMax);
+      // Highlighted faces: boost brightness by +25%
+      if(hi&&!(tv===undefined||tv<0)){
+        c=[Math.min(1,c[0]*1.25+0.07),Math.min(1,c[1]*1.25+0.07),Math.min(1,c[2]*1.25+0.07)];
+      }
       for(var k=0;k<3;k++){var o=t*9+k*3; col[o]=c[0];col[o+1]=c[1];col[o+2]=c[2];}
     }
     geom.attributes.color.needsUpdate=true;
   }
 
-  // Populate right panel with wall thickness results
+  // Populate right panel with wall thickness results + profile chart
   function buildWallPanel(){
     if(!wallThkData) return;
     var wd=wallThkData;
@@ -997,13 +1053,15 @@
     });
     $('navbar').style.display=wd.items.length?'flex':'none';
     if(wd.items.length) wallSelect(0); else {
-      // No items beyond summary
       $('r-badge').className='badge ok'; $('r-badge').textContent='Wall OK';
       $('r-title').textContent='No wall thickness concerns';
       $('r-sub').textContent='Min '+wd.minThk.toFixed(2)+' mm · Avg '+wd.avgThk.toFixed(2)+' mm · Max '+wd.maxThk.toFixed(2)+' mm';
       $('r-body').innerHTML='<p class="muted">All measured wall sections meet the NADCA P-4A-3-15 design minimum ('+
         window.DfMEngine.RULES.minWallDesignMM.toFixed(1)+' mm) and no abrupt thickness changes were detected.</p>';
     }
+    // Update gradient legend and draw profile chart
+    drawWtLegendGradient();
+    buildThicknessChart();
   }
 
   // Select / highlight a wall thickness item
@@ -1030,6 +1088,161 @@
       c.classList.toggle('active',+c.dataset.wi===i);});
     var act=$('r-list').children[i]; if(act) act.scrollIntoView({block:'nearest'});
     paintWallHeatmap();
+  }
+
+  // ---- Thickness profile chart ----
+  // Bins all measured faces by position along the pull (height) axis,
+  // separates them into two lateral halves (Side A / Side B),
+  // and draws a canvas chart: X = thickness (mm), Y = height (mm).
+  function buildThicknessChart(){
+    if(!wallThkData||!faceInfo||!geom) return;
+    var thk=wallThkData.faceThkMM;
+    var R=window.DfMEngine.RULES;
+
+    // Height axis: pull direction if available, else world Y
+    var pd=pullVec?pullVec:[0,1,0];
+    // Lateral axis: world axis with smallest pull-direction component (most perpendicular)
+    var pAbs=[Math.abs(pd[0]),Math.abs(pd[1]),Math.abs(pd[2])];
+    var latAxis=(pAbs[0]<=pAbs[1]&&pAbs[0]<=pAbs[2])?0:(pAbs[1]<=pAbs[2]?1:2);
+
+    // Collect valid faces
+    var pts=[]; var latSum=0,latN=0;
+    faceInfo.forEach(function(f,i){
+      if(f.empty||!f.centroidMM) return;
+      var tv=thk[i]; if(tv<0) return;
+      var c=f.centroidMM;
+      var h=c[0]*pd[0]+c[1]*pd[1]+c[2]*pd[2];
+      var lat=c[latAxis];
+      latSum+=lat; latN++;
+      pts.push({h:h,thk:tv,lat:lat});
+    });
+    if(pts.length<4) return;
+    var latCen=latSum/latN;
+
+    // Bin by height into NBINS bands, split by side
+    var hMin=Infinity,hMax=-Infinity;
+    pts.forEach(function(p){if(p.h<hMin)hMin=p.h;if(p.h>hMax)hMax=p.h;});
+    var NBINS=60, bw=(hMax-hMin)/NBINS||1;
+    function binSide(sideA){
+      var bins=[]; for(var i=0;i<NBINS;i++) bins.push([]);
+      pts.forEach(function(p){
+        if((p.lat<latCen)!==sideA) return;
+        var bi=Math.max(0,Math.min(NBINS-1,Math.floor((p.h-hMin)/bw)));
+        bins[bi].push(p.thk);
+      });
+      var res=[];
+      bins.forEach(function(b,i){
+        if(!b.length) return;
+        res.push({h:hMin+(i+0.5)*bw, thk:b.reduce(function(s,v){return s+v;},0)/b.length});
+      });
+      return res;
+    }
+    var sideA=binSide(true), sideB=binSide(false);
+    if(!sideA.length&&!sideB.length) return;
+
+    // ---- Create / replace chart container in r-body ----
+    var old=document.getElementById('wt-chart-wrap');
+    if(old) old.parentNode.removeChild(old);
+    var wrap=document.createElement('div');
+    wrap.id='wt-chart-wrap'; wrap.className='wt-chart-wrap';
+    var titleEl=document.createElement('div');
+    titleEl.className='wt-chart-title';
+    titleEl.textContent='Thickness Profile   Min: '+wallThkData.minThk.toFixed(1)+'mm  Max: '+wallThkData.maxThk.toFixed(1)+'mm';
+    wrap.appendChild(titleEl);
+    var cv=document.createElement('canvas');
+    cv.id='wt-chart';
+    var rbody=$('r-body');
+    var W=Math.max(260, rbody.clientWidth-36); var H=280;
+    cv.width=W; cv.height=H;
+    cv.style.width='100%';
+    wrap.appendChild(cv);
+    rbody.appendChild(wrap);
+
+    // ---- Draw ----
+    var ctx=cv.getContext('2d');
+    var PAD={top:20,right:18,bottom:42,left:50};
+    var cw=W-PAD.left-PAD.right, ch=H-PAD.top-PAD.bottom;
+
+    // Ranges — add 10% headroom
+    var allThk=[]; sideA.concat(sideB).forEach(function(p){allThk.push(p.thk);});
+    var tMin=Math.max(0,Math.min.apply(null,allThk)-0.3);
+    var tMax=Math.max.apply(null,allThk)+0.5;
+
+    function tx(t){return PAD.left+(t-tMin)/(tMax-tMin)*cw;}
+    function ty(h){return PAD.top+(1-(h-hMin)/(hMax-hMin))*ch;}
+
+    // Dark background fill for chart area
+    ctx.fillStyle='rgba(20,28,38,0.5)';
+    ctx.fillRect(PAD.left,PAD.top,cw,ch);
+
+    // Grid + tick labels
+    var nTicks=5;
+    ctx.strokeStyle='rgba(255,255,255,0.07)'; ctx.lineWidth=1;
+    ctx.font='10px -apple-system,Arial,sans-serif';
+    // X ticks (thickness)
+    for(var i=0;i<=nTicks;i++){
+      var tv=tMin+i*(tMax-tMin)/nTicks;
+      var x=tx(tv);
+      ctx.beginPath(); ctx.moveTo(x,PAD.top); ctx.lineTo(x,PAD.top+ch); ctx.stroke();
+      ctx.fillStyle='rgba(144,160,178,0.85)'; ctx.textAlign='center';
+      ctx.fillText(tv.toFixed(1),x,PAD.top+ch+13);
+    }
+    // Y ticks (height)
+    for(var j=0;j<=4;j++){
+      var hv=hMin+j*(hMax-hMin)/4;
+      var y=ty(hv);
+      ctx.beginPath(); ctx.moveTo(PAD.left,y); ctx.lineTo(PAD.left+cw,y); ctx.stroke();
+      ctx.fillStyle='rgba(144,160,178,0.85)'; ctx.textAlign='right';
+      ctx.fillText(hv.toFixed(0),PAD.left-5,y+4);
+    }
+    // Axis labels
+    ctx.fillStyle='rgba(144,160,178,0.85)'; ctx.textAlign='center';
+    ctx.fillText('thickness (mm)',PAD.left+cw/2,H-5);
+    ctx.save();
+    ctx.translate(11,PAD.top+ch/2); ctx.rotate(-Math.PI/2);
+    ctx.fillText('height (mm)',0,0);
+    ctx.restore();
+
+    // NADCA threshold lines
+    function threshLine(val,color,label,yOff){
+      if(val<tMin||val>tMax) return;
+      var x=tx(val);
+      ctx.save();
+      ctx.strokeStyle=color; ctx.lineWidth=1.5; ctx.setLineDash([5,4]);
+      ctx.beginPath(); ctx.moveTo(x,PAD.top); ctx.lineTo(x,PAD.top+ch); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle=color; ctx.textAlign='left'; ctx.font='9px -apple-system,Arial,sans-serif';
+      ctx.fillText(label,x+2,PAD.top+yOff);
+      ctx.restore();
+    }
+    threshLine(R.minWallDesignMM,'rgba(230,196,58,0.85)',R.minWallDesignMM.toFixed(1)+'mm',10);
+    threshLine(R.minWallAchievMM,'rgba(242,67,56,0.85)',R.minWallAchievMM.toFixed(1)+'mm',22);
+
+    // Draw two side lines
+    function drawLine(pts2,color,dashed){
+      if(!pts2.length) return;
+      ctx.strokeStyle=color; ctx.lineWidth=2;
+      ctx.setLineDash(dashed?[5,4]:[]);
+      ctx.beginPath();
+      pts2.forEach(function(p,i){
+        var x=tx(p.thk), y=ty(p.h);
+        i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+      });
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    drawLine(sideA,'rgba(222,80,80,0.95)',false);    // Side A = red
+    drawLine(sideB,'rgba(160,185,210,0.95)',false);  // Side B = blue-grey
+
+    // In-chart legend
+    var lx=PAD.left+cw-80, ly=PAD.top+8;
+    ctx.strokeStyle='rgba(222,80,80,0.95)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(lx+18,ly); ctx.stroke();
+    ctx.fillStyle='rgba(144,160,178,0.85)'; ctx.textAlign='left';
+    ctx.font='10px -apple-system,Arial,sans-serif';
+    ctx.fillText('Side A',lx+22,ly+4);
+    ctx.strokeStyle='rgba(160,185,210,0.95)';
+    ctx.beginPath(); ctx.moveTo(lx,ly+14); ctx.lineTo(lx+18,ly+14); ctx.stroke();
+    ctx.fillText('Side B',lx+22,ly+18);
   }
 
   // Toggle wall thickness heatmap on/off.
