@@ -1365,9 +1365,10 @@
         var faceThkMM=new Array(nFaces).fill(Infinity);
 
         var SKIP=0.15;  // ignore hits < 0.15 mm (self-surface tolerance)
-        var MAX_TRI=3;  // sample up to 3 extra triangle midpoints per face
+        var MAX_TRI=5;  // sample up to this many step-spaced triangles per face for normal rays
 
-        // ── 14 world-space directions ─────────────────────────────────────────────────
+        // ── 14 world-space supplementary directions ───────────────────────────────────
+        // Used as a fallback / supplement after per-face-normal rays.
         var I3=1/Math.sqrt(3);
         var DIRS=[
           new THREE.Vector3( 1, 0, 0), new THREE.Vector3(-1, 0, 0),
@@ -1379,42 +1380,81 @@
           new THREE.Vector3( I3,-I3,-I3), new THREE.Vector3(-I3,-I3,-I3),
         ];
 
-        // Raw mesh data for multi-point sampling
+        // Raw mesh data
         var brepFaces=meshRaw.brep_faces;
         var rawPos=meshRaw.attributes.position.array;
         var rawIdx=meshRaw.index.array;
 
         faceInfo.forEach(function(f){
           if(f.empty||!f.centroidMM) return;
+          var fi=f.index;
+          var bf=brepFaces[fi]; if(!bf) return;
+          var nTri=bf.last-bf.first+1;
+          var step=Math.max(1,Math.floor(nTri/MAX_TRI));
+          var samplePt=new THREE.Vector3();
 
-          // Sample points: face centroid + midpoints of evenly-spaced triangles
-          var samples=[new THREE.Vector3(f.centroidMM[0],f.centroidMM[1],f.centroidMM[2])];
-          var bf=brepFaces[f.index];
-          if(bf){
-            var nTri=bf.last-bf.first+1;
-            var step=Math.max(1,Math.floor(nTri/MAX_TRI));
-            for(var t=bf.first;t<=bf.last;t+=step){
-              var i0=rawIdx[3*t]*3, i1=rawIdx[3*t+1]*3, i2=rawIdx[3*t+2]*3;
-              samples.push(new THREE.Vector3(
-                (rawPos[i0]+rawPos[i1]+rawPos[i2])/3,
-                (rawPos[i0+1]+rawPos[i1+1]+rawPos[i2+1])/3,
-                (rawPos[i0+2]+rawPos[i1+2]+rawPos[i2+2])/3));
-            }
-          }
+          // ── Phase 1: Per-triangle face-normal rays (primary measurement) ──────────
+          //
+          // For each sampled triangle we compute the local surface normal via cross-product
+          // and cast a ray in BOTH ±normal directions.  We record the SHORTER valid hit,
+          // which is always the perpendicular path through the wall material:
+          //   · Thin shell face → ray exits through back-wall after wall_thickness  (small)
+          //   · Thick solid face → ray travels deep into the body                  (large)
+          //   · Hollow body outer face → ray through the shell, not across the body (correct)
+          //
+          // This eliminates the "wrong colour on a boss top or hollow-body outer face"
+          // artefact caused by fixed world-direction rays slicing through geometry at an angle.
+          //
+          for(var t=bf.first;t<=bf.last;t+=step){
+            var i0=rawIdx[3*t]*3, i1=rawIdx[3*t+1]*3, i2=rawIdx[3*t+2]*3;
 
-          for(var si=0;si<samples.length;si++){
-            for(var di=0;di<DIRS.length;di++){
-              wtRC.set(samples[si], DIRS[di]);
-              var hits=wtRC.intersectObject(mesh3);
-              for(var k=0;k<hits.length;k++){
-                var d=hits[k].distance;
+            // Triangle centroid (world-space sample point)
+            samplePt.set(
+              (rawPos[i0]+rawPos[i1]+rawPos[i2])/3,
+              (rawPos[i0+1]+rawPos[i1+1]+rawPos[i2+1])/3,
+              (rawPos[i0+2]+rawPos[i1+2]+rawPos[i2+2])/3);
+
+            // Triangle normal via edge cross-product
+            var ax=rawPos[i1]-rawPos[i0], ay=rawPos[i1+1]-rawPos[i0+1], az=rawPos[i1+2]-rawPos[i0+2];
+            var bx=rawPos[i2]-rawPos[i0], by=rawPos[i2+1]-rawPos[i0+1], bz=rawPos[i2+2]-rawPos[i0+2];
+            var tnx=ay*bz-az*by, tny=az*bx-ax*bz, tnz=ax*by-ay*bx;
+            var tlen=Math.sqrt(tnx*tnx+tny*tny+tnz*tnz);
+            if(tlen<1e-10) continue;
+            tnx/=tlen; tny/=tlen; tnz/=tlen;
+
+            // Cast in ±normal; take whichever gives the shorter (more accurate) hit
+            var bestD=Infinity, bestHitFi=-1;
+            for(var sgn=-1;sgn<=1;sgn+=2){
+              var ndir=new THREE.Vector3(tnx*sgn, tny*sgn, tnz*sgn);
+              wtRC.set(samplePt, ndir);
+              var nh=wtRC.intersectObject(mesh3);
+              for(var k=0;k<nh.length;k++){
+                var d=nh[k].distance;
                 if(d<=SKIP) continue;
-                // Bidirectional: record on face A (source) and face B (hit target)
-                if(d < faceThkMM[f.index]) faceThkMM[f.index]=d;
-                var hitFace=triFace[hits[k].faceIndex];
-                if(hitFace>=0 && d < faceThkMM[hitFace]) faceThkMM[hitFace]=d;
+                if(d<bestD){ bestD=d; bestHitFi=triFace[nh[k].faceIndex]; }
                 break;
               }
+            }
+
+            if(bestD<faceThkMM[fi]) faceThkMM[fi]=bestD;
+            if(bestHitFi>=0 && bestD<faceThkMM[bestHitFi]) faceThkMM[bestHitFi]=bestD;
+          }
+
+          // ── Phase 2: 14 world-space supplementary rays from face centroid ─────────
+          // Catches geometry that the normal rays miss (very flat faces, near-parallel
+          // normals that exit without hitting anything useful, etc.).
+          // Bidirectional recording kept — min() ensures no value can get WORSE.
+          var centroid=new THREE.Vector3(f.centroidMM[0],f.centroidMM[1],f.centroidMM[2]);
+          for(var di=0;di<DIRS.length;di++){
+            wtRC.set(centroid, DIRS[di]);
+            var wh=wtRC.intersectObject(mesh3);
+            for(var k2=0;k2<wh.length;k2++){
+              var d2=wh[k2].distance;
+              if(d2<=SKIP) continue;
+              if(d2<faceThkMM[fi]) faceThkMM[fi]=d2;
+              var hf=triFace[wh[k2].faceIndex];
+              if(hf>=0 && d2<faceThkMM[hf]) faceThkMM[hf]=d2;
+              break;
             }
           }
         });
