@@ -208,6 +208,47 @@
     color:var(--accent);
     box-shadow:0 0 0 2px rgba(74,158,255,.25), 0 0 12px 3px rgba(74,158,255,.30);
   }
+
+  /* ---------- reference plane toggle buttons ---------- */
+  #refplane-ctl{display:none;align-items:center;gap:4px}
+  #refplane-ctl .rp-lbl{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap}
+  .rp-btn{padding:4px 9px;font-size:12px;border-radius:6px;border:1px solid var(--line);
+    background:var(--panel2);cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+  .rp-btn.top-btn{color:var(--mut)}
+  .rp-btn.top-btn:hover,.rp-btn.top-btn.rp-active{border-color:#6db4ff;color:#6db4ff;background:rgba(68,136,238,.12)}
+  .rp-btn.front-btn{color:var(--mut)}
+  .rp-btn.front-btn:hover,.rp-btn.front-btn.rp-active{border-color:#5fdc73;color:#5fdc73;background:rgba(68,187,102,.12)}
+  .rp-btn.side-btn{color:var(--mut)}
+  .rp-btn.side-btn:hover,.rp-btn.side-btn.rp-active{border-color:#ff5b5b;color:#ff5b5b;background:rgba(204,68,68,.12)}
+
+  /* ---------- section button ---------- */
+  button#sectionbtn{background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    transition:box-shadow .2s,border-color .2s,color .2s,background .2s}
+  button#sectionbtn:hover{border-color:var(--accent);color:var(--accent)}
+  button#sectionbtn.section-active{
+    background:rgba(74,158,255,.14);border-color:var(--accent);color:var(--accent);
+    box-shadow:0 0 0 2px rgba(74,158,255,.25), 0 0 12px 3px rgba(74,158,255,.30);
+  }
+
+  /* ---------- cross-section control panel (floating, bottom-right of viewport) ---------- */
+  #section-ctl{
+    position:absolute;bottom:14px;right:14px;z-index:4;display:none;flex-direction:column;gap:8px;
+    background:rgba(12,16,21,.86);backdrop-filter:blur(6px);
+    border:1px solid var(--line);border-radius:9px;padding:11px 14px;min-width:190px;
+  }
+  #section-ctl.show{display:flex}
+  #section-ctl .sc-title{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);margin-bottom:1px}
+  #section-ctl .sc-axes{display:flex;gap:5px}
+  .sc-ax{flex:1;padding:4px 0;font-size:12px;font-weight:700;border-radius:6px;border:1px solid var(--line);
+    background:var(--panel2);cursor:pointer;color:var(--mut);transition:.15s;text-align:center}
+  .sc-ax:hover{border-color:var(--accent);color:var(--txt)}
+  .sc-ax.sc-sel{border-color:var(--accent);color:var(--accent);background:rgba(74,158,255,.12)}
+  #section-slider{width:100%;accent-color:var(--accent);cursor:pointer;margin:0;height:18px}
+  #section-ctl .sc-footer{display:flex;justify-content:space-between;align-items:center}
+  #section-val{font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums}
+  #section-flip{font-size:11px;padding:2px 8px;border-radius:5px;border:1px solid var(--line);
+    background:var(--panel2);cursor:pointer;color:var(--mut)}
+  #section-flip:hover{border-color:var(--accent);color:var(--accent)}
 </style>
 </head>
 <body>
@@ -240,6 +281,13 @@
   <button id="changepull" style="display:none">Change pull face</button>
   <button id="flippull" style="display:none">⇅ Flip direction</button>
   <button id="wallcheck" style="display:none" title="Toggle wall thickness heatmap — flags thin walls and abrupt changes (NADCA P-4A-3-15)">⊡ Wall Thickness</button>
+  <div id="refplane-ctl">
+    <span class="rp-lbl">Planes</span>
+    <button class="rp-btn top-btn" data-plane="top" title="Toggle Top reference plane (XZ, horizontal)">Top</button>
+    <button class="rp-btn front-btn" data-plane="front" title="Toggle Front reference plane (XY)">Front</button>
+    <button class="rp-btn side-btn" data-plane="side" title="Toggle Side reference plane (YZ)">Side</button>
+  </div>
+  <button id="sectionbtn" style="display:none" title="Toggle cross-section — drag slider to cut along X/Y/Z">⊘ Section</button>
 </div>
 
 <!-- ============ STEP GUIDE ============ -->
@@ -271,6 +319,21 @@
       <div class="wt-row"><i style="background:#e6c43a"></i><span>Thin — 0.8–1.2 mm</span></div>
       <div class="wt-row"><i style="background:#f24338"></i><span>Critical — &lt; 0.8 mm</span></div>
       <div class="wt-row"><i style="background:#606878"></i><span>No data</span></div>
+    </div>
+
+    <!-- cross-section control panel -->
+    <div id="section-ctl">
+      <div class="sc-title">Cross Section</div>
+      <div class="sc-axes">
+        <button class="sc-ax" data-ax="X" title="Clip along X (Side)">X</button>
+        <button class="sc-ax sc-sel" data-ax="Y" title="Clip along Y (Top)">Y</button>
+        <button class="sc-ax" data-ax="Z" title="Clip along Z (Front)">Z</button>
+      </div>
+      <input type="range" id="section-slider" min="0" max="1" step="0.001" value="0.5">
+      <div class="sc-footer">
+        <span id="section-val">—</span>
+        <button id="section-flip" title="Flip clip direction">⇄ Flip</button>
+      </div>
     </div>
 
     <div class="vhint">drag = rotate · scroll = zoom · right-drag = pan · right-click flat face = view options</div>
@@ -341,6 +404,14 @@
       _pickedFace=-1;                                // face idx shown in face-info tooltip
   var wallThkData=null, wallActiveIdx=-1, prevMode='empty'; // wall thickness analysis results + mode to restore on toggle-off
 
+  // ---- reference planes + cross-section state ----
+  var refPlaneHelpers={top:null, front:null, side:null};         // THREE.GridHelper objects
+  var refPlaneVisible={top:false, front:false, side:false};      // per-plane visibility
+  var clipEnabled=false;          // is cross-section clipping active?
+  var clipAxis='Y';               // current clip axis: 'X' | 'Y' | 'Z'
+  var clipFlipped=false;          // flip clip direction?
+  var clipPlaneObj=new THREE.Plane(new THREE.Vector3(0,-1,0),0); // THREE.Plane used for clipping
+
   // face colors:  green = OK,  red = critical concern,  yellow = minor / verify,
   //               *Active variants are brighter*,  blue = pull-direction face,
   //               grey = neutral (pre-analysis)
@@ -374,6 +445,7 @@
     renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,alpha:true});
     renderer.setPixelRatio(window.devicePixelRatio||1);
     renderer.setClearColor(0x000000,0);   // transparent: viewport bg comes from #left CSS
+    renderer.localClippingEnabled=true;   // required for per-material clipping planes
     scene=new THREE.Scene();
     camera=new THREE.OrthographicCamera(-1,1,1,-1,-1e5,1e5);
     // ---- Arcball (virtual trackball) — CAD-style rotation ----
@@ -577,9 +649,11 @@
     geom.computeVertexNormals();
     geom.computeBoundingBox(); geom.computeBoundingSphere();
     var matr=new THREE.MeshStandardMaterial({vertexColors:true,metalness:0.1,roughness:0.7,
-      flatShading:true,side:THREE.DoubleSide});
+      flatShading:true,side:THREE.DoubleSide,
+      clippingPlanes:[], clipShadows:false});
     mesh3=new THREE.Mesh(geom,matr); scene.add(mesh3);
     fitCamera();
+    createRefPlanes();   // position grid helpers to match new model bounds
   }
   // Reconstruct camera state from the stored orbit quaternion + distance.
   // Called after every rotation, pan, zoom, and on model load.
@@ -1015,6 +1089,86 @@
     },30);
   }
 
+  // ---- reference planes ----
+
+  // Create / reposition the three GridHelper reference planes to match the loaded model.
+  // Called each time a new mesh is built. Visibility reflects the persisted refPlaneVisible state.
+  function createRefPlanes(){
+    // Remove old helpers from scene
+    ['top','front','side'].forEach(function(k){
+      if(refPlaneHelpers[k]){scene.remove(refPlaneHelpers[k]); refPlaneHelpers[k]=null;}
+    });
+    if(!geom) return;
+    var s=geom.boundingSphere, c=s.center, r=s.radius||1;
+    var sz=r*3.5;
+    var divs=Math.max(10,Math.min(30,Math.floor(sz/8)|0));
+
+    // Top (XZ plane — horizontal, Y-normal) — blue
+    var top=new THREE.GridHelper(sz,divs,0x4488ee,0x1e3d5c);
+    top.position.copy(c);
+    top.visible=refPlaneVisible.top;
+    scene.add(top); refPlaneHelpers.top=top;
+
+    // Front (XY plane — vertical facing viewer, Z-normal) — green; rotate X -90°
+    var front=new THREE.GridHelper(sz,divs,0x44bb66,0x1e4a2e);
+    front.position.copy(c);
+    front.rotation.x=Math.PI/2;
+    front.visible=refPlaneVisible.front;
+    scene.add(front); refPlaneHelpers.front=front;
+
+    // Side (YZ plane — vertical facing right, X-normal) — red; rotate Z 90°
+    var side=new THREE.GridHelper(sz,divs,0xcc4444,0x4a1e1e);
+    side.position.copy(c);
+    side.rotation.z=Math.PI/2;
+    side.visible=refPlaneVisible.side;
+    scene.add(side); refPlaneHelpers.side=side;
+  }
+
+  function toggleRefPlane(name){
+    refPlaneVisible[name]=!refPlaneVisible[name];
+    if(refPlaneHelpers[name]) refPlaneHelpers[name].visible=refPlaneVisible[name];
+    var btn=document.querySelector('.rp-btn[data-plane="'+name+'"]');
+    if(btn) btn.classList.toggle('rp-active',refPlaneVisible[name]);
+  }
+
+  // ---- cross-section (clipping plane) ----
+
+  function toggleSection(){
+    if(!mesh3) return;
+    clipEnabled=!clipEnabled;
+    mesh3.material.clippingPlanes=clipEnabled?[clipPlaneObj]:[];
+    mesh3.material.needsUpdate=true;
+    $('sectionbtn').classList.toggle('section-active',clipEnabled);
+    $('section-ctl').classList.toggle('show',clipEnabled);
+    if(clipEnabled) updateClipPlane();
+  }
+
+  // Recompute clipPlaneObj from current axis, slider value, and flip state.
+  function updateClipPlane(){
+    if(!geom) return;
+    var bb=geom.boundingBox;
+    var t=parseFloat($('section-slider').value); // 0…1
+    var pos, nx=0,ny=0,nz=0;
+    if(clipAxis==='X'){ pos=bb.min.x+(bb.max.x-bb.min.x)*t; nx=1; }
+    else if(clipAxis==='Y'){ pos=bb.min.y+(bb.max.y-bb.min.y)*t; ny=1; }
+    else { pos=bb.min.z+(bb.max.z-bb.min.z)*t; nz=1; }
+    // Without flip: hide above 'pos' → normal points inward (neg direction)
+    var sign=clipFlipped?1:-1;
+    clipPlaneObj.set(new THREE.Vector3(nx*sign,ny*sign,nz*sign),-pos*sign);
+    $('section-val').textContent=pos.toFixed(1)+' mm';
+  }
+
+  // Change the clip axis; reset slider to mid-point and update.
+  function setClipAxis(ax){
+    clipAxis=ax;
+    $('section-slider').value='0.5';
+    // Update axis button highlights
+    Array.prototype.forEach.call(document.querySelectorAll('.sc-ax'),function(b){
+      b.classList.toggle('sc-sel',b.dataset.ax===ax);
+    });
+    if(clipEnabled) updateClipPlane();
+  }
+
   // ---- step / mode controller (guides the user) ----
   function setMode(m){
     hideFaceInfo();
@@ -1035,6 +1189,8 @@
     $('flippull').style.display  =(m==='ready'||m==='results')?'inline-block':'none';
     $('wallcheck').style.display =(m==='ready'||m==='results'||m==='wt')?'inline-block':'none';
     $('wallcheck').classList.toggle('wt-active', isWt);
+    $('refplane-ctl').style.display=hasModel?'flex':'none';
+    $('sectionbtn').style.display=hasModel?'inline-block':'none';
     $('pickhint').classList.toggle('show', m==='pick');
     $('wtlegend').classList.toggle('show', isWt);
     if(isWt){ paintWallHeatmap(); return; }  // panel filled by buildWallPanel()
@@ -1067,6 +1223,18 @@
   function resetForNewFile(){
     analysis=null; active=-1; pullFaceIdx=-1; pullVec=null; faceInfo=null;
     wallThkData=null; wallActiveIdx=-1;
+    // Reset cross-section
+    clipEnabled=false; clipFlipped=false;
+    if(mesh3&&mesh3.material){mesh3.material.clippingPlanes=[];mesh3.material.needsUpdate=true;}
+    $('sectionbtn').classList.remove('section-active');
+    $('section-ctl').classList.remove('show');
+    $('section-slider').value='0.5';
+    // Reset reference planes visibility (helpers are rebuilt in createRefPlanes via buildMesh)
+    ['top','front','side'].forEach(function(k){
+      refPlaneVisible[k]=false;
+      var btn=document.querySelector('.rp-btn[data-plane="'+k+'"]');
+      if(btn) btn.classList.remove('rp-active');
+    });
     if(arrow){scene.remove(arrow);arrow=null;}
     ['s-file','s-unit','s-env','s-faces','s-crit','s-warn','s-items'].forEach(function(id){$(id).textContent='—';});
   }
@@ -1146,6 +1314,23 @@
       if(e.key==='ArrowLeft')select((active-1+analysis.items.length)%analysis.items.length);
     });
     $('wallcheck').addEventListener('click', runWallCheck);
+    // ---- reference plane toggles ----
+    Array.prototype.forEach.call(document.querySelectorAll('.rp-btn'),function(btn){
+      btn.addEventListener('click',function(){toggleRefPlane(this.dataset.plane);});
+    });
+    // ---- section button + axis selector + slider + flip ----
+    $('sectionbtn').addEventListener('click',toggleSection);
+    Array.prototype.forEach.call(document.querySelectorAll('.sc-ax'),function(btn){
+      btn.addEventListener('click',function(){setClipAxis(this.dataset.ax);});
+    });
+    $('section-slider').addEventListener('input',function(){
+      if(clipEnabled) updateClipPlane();
+    });
+    $('section-flip').addEventListener('click',function(){
+      clipFlipped=!clipFlipped;
+      this.style.color=clipFlipped?'var(--accent)':'';
+      if(clipEnabled) updateClipPlane();
+    });
     // ---- context menu: View Normal to Face ----
     $('ctx-viewnormal').addEventListener('click',function(){
       var fi=this._faceIdx;
