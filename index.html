@@ -701,8 +701,8 @@
     geom.setAttribute('color',new THREE.BufferAttribute(cols,3));
     geom.computeVertexNormals();
     geom.computeBoundingBox(); geom.computeBoundingSphere();
-    var matr=new THREE.MeshStandardMaterial({vertexColors:true,metalness:0.1,roughness:0.7,
-      flatShading:true,side:THREE.DoubleSide,
+    var matr=new THREE.MeshStandardMaterial({vertexColors:true,metalness:0.15,roughness:0.65,
+      flatShading:true,side:THREE.FrontSide,   // FrontSide = solid appearance; DoubleSide only when section-cut is active
       clippingPlanes:[], clipShadows:false});
     mesh3=new THREE.Mesh(geom,matr); scene.add(mesh3);
     fitCamera();
@@ -1277,27 +1277,96 @@
     $('loadtxt').textContent='Measuring wall thickness…';
     setTimeout(function(){
       try{
+        // ── Multi-sample, multi-direction raycast (rolling-ball approximation) ──
+        //
+        // Per face we cast rays from:
+        //   • face centroid
+        //   • midpoints of up to MAX_TRI_SAMPLES triangles distributed across the face
+        //
+        // In each of 5 directions:
+        //   • exact inward normal  (-n)
+        //   • ±15° from -n along each of two face-tangent axes
+        //
+        // We take the MINIMUM valid hit distance across all samples/directions.
+        // This approximates the rolling-ball result: for a given face, the
+        // smallest sphere that fits through the wall at or near that face.
+
+        // Raycast needs DoubleSide so inward rays hit back-faces of the solid.
+        var prevSide=mesh3.material.side;
+        mesh3.material.side=THREE.DoubleSide;
+        mesh3.material.needsUpdate=true;
+
         var wtRC=new THREE.Raycaster();
         var nFaces=faceInfo.length;
         var faceThkMM=new Array(nFaces).fill(-1);
-        var SKIP=0.5; // skip self-intersections within 0.5 mm
+        var SKIP=0.25;           // skip self-intersection within 0.25 mm
+        var MAX_TRI=4;           // max triangles to sample additional points from
+        var COS15=Math.cos(15*Math.PI/180), SIN15=Math.sin(15*Math.PI/180);
+
+        // Access raw triangle data for multi-point sampling
+        var brepFaces=meshRaw.brep_faces;
+        var rawPos=meshRaw.attributes.position.array;
+        var rawIdx=meshRaw.index.array;
 
         faceInfo.forEach(function(f){
           if(f.empty||!f.normal) return;
-          var ori=new THREE.Vector3(f.centroidMM[0],f.centroidMM[1],f.centroidMM[2]);
-          var dir=new THREE.Vector3(-f.normal[0],-f.normal[1],-f.normal[2]);
-          wtRC.set(ori,dir);
-          var hits=wtRC.intersectObject(mesh3);
-          for(var k=0;k<hits.length;k++){
-            if(hits[k].distance > SKIP){ faceThkMM[f.index]=hits[k].distance; break; }
+
+          // ── 5 ray directions ──────────────────────────────────────────────
+          var nx=-f.normal[0], ny=-f.normal[1], nz=-f.normal[2]; // inward normal
+          var nv=new THREE.Vector3(nx,ny,nz);
+          var up=Math.abs(ny)<0.9?new THREE.Vector3(0,1,0):new THREE.Vector3(1,0,0);
+          var t1=new THREE.Vector3().crossVectors(nv,up).normalize();
+          var t2=new THREE.Vector3().crossVectors(nv,t1).normalize();
+          var dirs=[
+            nv.clone(),
+            new THREE.Vector3(nx*COS15+t1.x*SIN15, ny*COS15+t1.y*SIN15, nz*COS15+t1.z*SIN15).normalize(),
+            new THREE.Vector3(nx*COS15-t1.x*SIN15, ny*COS15-t1.y*SIN15, nz*COS15-t1.z*SIN15).normalize(),
+            new THREE.Vector3(nx*COS15+t2.x*SIN15, ny*COS15+t2.y*SIN15, nz*COS15+t2.z*SIN15).normalize(),
+            new THREE.Vector3(nx*COS15-t2.x*SIN15, ny*COS15-t2.y*SIN15, nz*COS15-t2.z*SIN15).normalize(),
+          ];
+
+          // ── sample points: centroid + triangle midpoints ──────────────────
+          var samples=[new THREE.Vector3(f.centroidMM[0],f.centroidMM[1],f.centroidMM[2])];
+          var bf=brepFaces[f.index];
+          if(bf){
+            var totalTri=bf.last-bf.first+1;
+            var step=Math.max(1,Math.floor(totalTri/MAX_TRI));
+            for(var t=bf.first;t<=bf.last;t+=step){
+              var i0=rawIdx[3*t]*3, i1=rawIdx[3*t+1]*3, i2=rawIdx[3*t+2]*3;
+              samples.push(new THREE.Vector3(
+                (rawPos[i0]+rawPos[i1]+rawPos[i2])/3,
+                (rawPos[i0+1]+rawPos[i1+1]+rawPos[i2+1])/3,
+                (rawPos[i0+2]+rawPos[i1+2]+rawPos[i2+2])/3
+              ));
+            }
           }
+
+          // ── cast all rays, keep minimum valid distance ────────────────────
+          var minThk=Infinity;
+          for(var si=0;si<samples.length;si++){
+            for(var di=0;di<dirs.length;di++){
+              wtRC.set(samples[si],dirs[di]);
+              var hits=wtRC.intersectObject(mesh3);
+              for(var k=0;k<hits.length;k++){
+                if(hits[k].distance>SKIP){ minThk=Math.min(minThk,hits[k].distance); break; }
+              }
+            }
+          }
+          faceThkMM[f.index]=minThk<Infinity?minThk:-1;
         });
+
+        // Restore material side
+        mesh3.material.side=prevSide;
+        mesh3.material.needsUpdate=true;
 
         wallThkData=window.DfMEngine.analyzeWallThickness(faceThkMM,faceInfo);
         wallActiveIdx=-1;
         setMode('wt');
         buildWallPanel();
-      } catch(e){ alert('Wall thickness check failed: '+e.message); }
+      } catch(e){
+        if(mesh3&&mesh3.material){mesh3.material.side=clipEnabled?THREE.DoubleSide:THREE.FrontSide;mesh3.material.needsUpdate=true;}
+        alert('Wall thickness check failed: '+e.message);
+      }
       $('loading').classList.remove('show');
     },30);
   }
@@ -1350,6 +1419,9 @@
     if(!mesh3) return;
     clipEnabled=!clipEnabled;
     mesh3.material.clippingPlanes=clipEnabled?[clipPlaneObj]:[];
+    // DoubleSide when section is active so interior surfaces are visible through the cut.
+    // FrontSide otherwise — model looks properly solid (opaque, no see-through on thin walls).
+    mesh3.material.side=clipEnabled?THREE.DoubleSide:THREE.FrontSide;
     mesh3.material.needsUpdate=true;
     $('sectionbtn').classList.toggle('section-active',clipEnabled);
     $('section-ctl').classList.toggle('show',clipEnabled);
@@ -1438,7 +1510,11 @@
     wallThkData=null; wallActiveIdx=-1;
     // Reset cross-section
     clipEnabled=false; clipFlipped=false;
-    if(mesh3&&mesh3.material){mesh3.material.clippingPlanes=[];mesh3.material.needsUpdate=true;}
+    if(mesh3&&mesh3.material){
+      mesh3.material.clippingPlanes=[];
+      mesh3.material.side=THREE.FrontSide;
+      mesh3.material.needsUpdate=true;
+    }
     $('sectionbtn').classList.remove('section-active');
     $('section-ctl').classList.remove('show');
     $('section-slider').value='0.5';
