@@ -274,11 +274,13 @@ function buildItems(faces, pull, pullName){
 
   // Classify recessed lateral faces (pocket walls).
   // Reject faces at the very top/bottom of the part (parting-surface geometry).
+  // Depth threshold raised to 1.5 mm (non-extreme) / 2.0 mm (extreme) so that tiny surface
+  // irregularities and shallow chamfers don't get mistaken for true pocket walls.
   var recessedLateral=[];
   lateralPlanar.forEach(function(f){
     var relH=(dot(f.centroidMM,pull)-pullExtMin)/pullSpan;
     var atExtreme=(relH<0.05||relH>0.95);
-    if(f._depthBehind > 1.0 || (!atExtreme && f._depthBehind > 0.1))
+    if(f._depthBehind > 2.0 || (!atExtreme && f._depthBehind > 1.5))
       recessedLateral.push(f);
   });
 
@@ -291,25 +293,62 @@ function buildItems(faces, pull, pullName){
   });
 
   // --- Strategy D: enclosed ceiling faces ---
-  // An upward-facing face (dot(N,pull) > 0.5) that is:
-  //   • below the part top (relH < 0.92), AND
-  //   • within "reach" of at least one recessed lateral wall (recessedLateral from C)
-  // cannot be released by a straight pull — it is the ceiling of a lateral slot/groove.
-  // Reach is adaptive: proportional to the wall face's own size, clamped to 8–40 mm.
+  // A face is a true ceiling undercut only if ALL THREE conditions hold:
+  //
+  //  1. Upward-facing (dot(N,pull) > 0.5) and below the part top (relH < 0.92).
+  //
+  //  2. OVERHANG: at least one face exists that is ABOVE it in the pull direction,
+  //     faces DOWNWARD (dot(N,pull) < -0.1), and is laterally close in the pull-
+  //     perpendicular plane.  Without an overhang the die can always pull the face
+  //     straight out — no side core is needed.
+  //     This overhang check is the key fix for false positives on hollow cylindrical
+  //     parts where lateral slots have large reach but internal faces are open above.
+  //
+  //  3. PROXIMITY: within reach of a recessed lateral wall (Strategy C).
+  //     Reach is tightened to max 20 mm (was 40 mm) to stop long slot walls from
+  //     sweeping across the entire part cross-section.
   var ceilUndercuts=[];
   if(recessedLateral.length > 0){
+    // Pre-collect downward-facing planar faces (candidates for overhangs / lids).
+    var downFaces=[];
+    faces.forEach(function(dv){
+      if(dv.empty||dv.kind!=='planar') return;
+      if(dot(dv.normal,pull) < -0.1) downFaces.push(dv);
+    });
+
     faces.forEach(function(f){
       if(f.empty||f.kind!=='planar') return;
       if(dot(f.normal,pull) <= 0.5) return;           // not upward-facing enough
       var relH=(dot(f.centroidMM,pull)-pullExtMin)/pullSpan;
       if(relH > 0.92) return;                         // at/near top parting surface → OK
+      if(relH < 0.05) return;                         // at/near bottom → OK
+
       var fPullH=dot(f.centroidMM,pull);
+      var fSz=Math.sqrt(f.areaMM2||1);
+
+      // ── Condition 2: overhang check ─────────────────────────────────────
+      // Look for a downward-facing face ABOVE this face that is laterally close.
+      // "Laterally close" = separation in the pull-perpendicular plane < coverRadius.
+      var hasOverhang=false;
+      for(var oi=0;oi<downFaces.length;oi++){
+        var ov=downFaces[oi];
+        var ovH=dot(ov.centroidMM,pull);
+        if(ovH <= fPullH+1.0) continue;               // must be clearly above F
+        var ddx=f.centroidMM[0]-ov.centroidMM[0];
+        var ddy=f.centroidMM[1]-ov.centroidMM[1];
+        var ddz=f.centroidMM[2]-ov.centroidMM[2];
+        var pullComp=ddx*pull[0]+ddy*pull[1]+ddz*pull[2];
+        var pd2=ddx*ddx+ddy*ddy+ddz*ddz-pullComp*pullComp; // perp dist²
+        var coverR=Math.sqrt(ov.areaMM2||1)*0.5+fSz*0.5+3.0;
+        if(pd2 < coverR*coverR){ hasOverhang=true; break; }
+      }
+      if(!hasOverhang) return;  // die can reach face from above → not a ceiling undercut
+
+      // ── Condition 3: lateral-wall proximity check ────────────────────────
       for(var i=0;i<recessedLateral.length;i++){
         var g=recessedLateral[i];
-        // Ceiling must be AT OR ABOVE the lateral wall in the pull direction.
-        // A ceiling that is BELOW the wall centroid is not a roof of that wall's pocket.
-        if(dot(g.centroidMM,pull) > fPullH) continue;
-        var reach=Math.min(Math.max(Math.sqrt(g.areaMM2)*2.0, 8.0), 40.0);
+        if(dot(g.centroidMM,pull) > fPullH) continue; // wall must be at/below ceiling height
+        var reach=Math.min(Math.max(Math.sqrt(g.areaMM2)*1.5, 5.0), 20.0); // tighter cap
         var dx=f.centroidMM[0]-g.centroidMM[0];
         var dy=f.centroidMM[1]-g.centroidMM[1];
         var dz=f.centroidMM[2]-g.centroidMM[2];
